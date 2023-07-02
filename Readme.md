@@ -18,12 +18,16 @@ $ dutis
 
 1. Waiting for environment checking
 
-![](./images/env-check.png)
+    ![](./images/env-check.png)
 
 2. Selecting suffix
 
-![](./images/choose-suffix.png)
+    ![](./images/choose-suffix.png)
 
 3. Selecting application UTI
  
-![](./images/choose-uti.png)
+    ![](./images/choose-uti.png)
+
+4. Finished
+
+    ![](./images/finish.png)

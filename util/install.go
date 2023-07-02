@@ -24,7 +24,7 @@ func installHomebrew() {
 	if err != nil {
 		err.Error()
 	} else {
-		fmt.Print("Homebrew works fine")
+		fmt.Println("Homebrew works fine")
 	}
 }
 
