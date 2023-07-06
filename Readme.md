@@ -1,6 +1,6 @@
 # Dutis
 
-A command-line tool to select default applications. It is a wrapper around `duti` commands.
+A command-line tool to select default applications. It is a wrapper around [duti](https://github.com/moretension/duti).
 
 ## Installation
 
