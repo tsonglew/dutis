@@ -24,10 +24,14 @@ $ dutis
 
     ![](./images/choose-suffix.png)
 
-3. Selecting application UTI
+3. Checking recommended applications
+
+    ![](./images/recommend.png)
+
+4. Selecting application UTI
  
     ![](./images/choose-uti.png)
 
-4. Finished
+5. Finished
 
     ![](./images/finish.png)
