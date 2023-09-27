@@ -68,9 +68,15 @@ func main() {
 		choosePreset()
 	}
 
+	if suf == "" {
+		return
+	}
 	printRecommend(suf)
 
 	utiName := chooseUti()
+	if utiName == "" {
+		return
+	}
 	if utiItem, ok := utiMap[utiName]; ok {
 		util.SetDefaultApplication(utiItem.Identifier, suf)
 	} else {
