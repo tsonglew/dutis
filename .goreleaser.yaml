@@ -49,14 +49,14 @@ brews:
   - # GitHub/GitLab repository to push the formula to
     tap:
       owner: tsonglew
-      name: cli
+      name: dutis
 
     name: brew_installer_name
     # Template for the url which is determined by the given Token (github or gitlab)
     # Default for github is "https://github.com/<repo_owner>/<repo_name>/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
     url_template: "https://github.com/tsonglew/dutis/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
 
-    homepage: https://github.com/homepage
+    homepage: https://github.com/tsonglew/dutis
 
     # Git author used to commit to the repository.
     # Defaults are shown.
@@ -72,7 +72,7 @@ brews:
 
     # Your app's description.
     # Default is empty.
-    description: ""
+    description: "A command-line tool to select default applications, based on duti"
 
     # SPDX identifier of your app's license.
     # Default is empty.
