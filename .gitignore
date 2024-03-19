@@ -21,3 +21,5 @@
 go.work
 main
 .idea/
+
+dist/
