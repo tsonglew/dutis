@@ -51,7 +51,7 @@ brews:
       owner: tsonglew
       name: dutis
 
-    name: brew_installer_name
+    name: dutis
     # Template for the url which is determined by the given Token (github or gitlab)
     # Default for github is "https://github.com/<repo_owner>/<repo_name>/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
     url_template: "https://github.com/tsonglew/dutis/releases/download/{{ .Tag }}/{{ .ArtifactName }}"

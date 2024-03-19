@@ -4,34 +4,47 @@ A command-line tool to select default applications. It is a wrapper around [duti
 
 ## Installation
 
+### Using HomeBrew
+
 ```shell
-$ go install github.com/tsonglew/dutis@latest
+brew tap tsonglew/dutis https://github.com/tsonglew/dutis
+brew install dutis
 ```
 
-## Usage 
+### Using Go
 
 ```shell
-$ dutis
+go install github.com/tsonglew/dutis@latest
+```
+
+## Usage
+
+```shell
+dutis
 ```
 
 ## Screenshots
 
 1. Waiting for environment checking
 
-    ![](./images/env-check.png)
+![env-check](./images/env-check.png)
 
-2. Selecting suffix
+1. Selecting suffix
 
-    ![](./images/choose-suffix.png)
+![choose-suffix](./images/choose-suffix.png)
 
-3. Checking recommended applications
+1. Checking recommended applications
 
-    ![](./images/recommend.png)
+![recommend](./images/recommend.png)
 
-4. Selecting application UTI
- 
-    ![](./images/choose-uti.png)
+1. Selecting application UTI
 
-5. Finished
+![choose-uti](./images/choose-uti.png)
 
-    ![](./images/finish.png)
+1. Finished
+
+![finish](./images/finish.png)
+
+## Stargazers over time
+
+[![Stargazers over time](https://starchart.cc/tsonglew/dutis.svg?variant=adaptive)](https://starchart.cc/tsonglew/dutis)
