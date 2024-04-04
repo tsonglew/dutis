@@ -2,9 +2,12 @@ package main
 
 import (
 	"fmt"
-	"github.com/c-bata/go-prompt"
-	"github.com/tsonglew/dutis/util"
 	"strings"
+
+	"github.com/c-bata/go-prompt"
+	"github.com/rivo/tview"
+	"github.com/tsonglew/dutis/pages"
+	"github.com/tsonglew/dutis/util"
 )
 
 var utiMap = util.ListApplicationsUti()
@@ -54,32 +57,10 @@ func printRecommend(suf string) {
 }
 
 func main() {
-	util.InstallDeps()
-	//fmt.Println("Please select mode by number.(Tab for auto complement)\n(1). change default application by suffix\n(2).
-	// change default application by preset")
-	//t := prompt.Input("> ", mainCompleter)
-	//fmt.Println("You selected " + t)
-	t := "1"
-	var suf string
-	switch t {
-	case "1":
-		suf = chooseSuffix()
-	case "2":
-		choosePreset()
-	}
-
-	if suf == "" {
-		return
-	}
-	printRecommend(suf)
-
-	utiName := chooseUti()
-	if utiName == "" {
-		return
-	}
-	if utiItem, ok := utiMap[utiName]; ok {
-		util.SetDefaultApplication(utiItem.Identifier, suf)
-	} else {
-		fmt.Printf("uti %s not found\n", utiName)
+	app := tview.NewApplication()
+	apppages := tview.NewPages()
+	pages.InitPages(app, apppages)
+	if err := app.SetRoot(apppages, true).SetFocus(apppages).Run(); err != nil {
+		panic(err)
 	}
 }

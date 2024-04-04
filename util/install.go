@@ -1,52 +1,30 @@
 package util
 
 import (
-	"fmt"
 	"os/exec"
 )
 
-func InstallDeps() {
-	installHomebrew()
-	installDuti()
-}
-
-func installHomebrew() {
-	fmt.Println("Check Homebrew Environment")
+func InstallHomebrew() error {
 	if !commandExists("brew") {
-		fmt.Println("Homebrew not exists, installing ...")
 		cmd := exec.Command("/bin/bash", "-c", "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)")
-		_, _ = cmd.Output()
+		_, err := cmd.Output()
+		return err
 	}
 
 	cmd := exec.Command("brew", "--help")
 	_, err := cmd.Output()
+	return err
 
-	if err != nil {
-		err.Error()
-	} else {
-		fmt.Println("Homebrew works fine")
-	}
 }
 
-func installDuti() {
-	fmt.Println("Check Duti Environment")
+func InstallDuti() error {
 	if !commandExists("duti") {
-		fmt.Println("Duti not exists, installing ...")
 		cmd := exec.Command("brew", "install", "duti")
 		_, err := cmd.Output()
-		if err != nil {
-			fmt.Println(string(err.(*exec.ExitError).Stderr))
-			panic(err)
-		}
+		return err
 	}
 
 	cmd := exec.Command("man", "duti")
 	_, err := cmd.Output()
-
-	if err != nil {
-		fmt.Println(string(err.(*exec.ExitError).Stderr))
-		panic(err)
-	} else {
-		fmt.Println("Duti works fine")
-	}
+	return err
 }
