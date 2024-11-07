@@ -23,3 +23,8 @@ main
 .idea/
 
 dist/
+
+
+# Added by cargo
+
+/target
