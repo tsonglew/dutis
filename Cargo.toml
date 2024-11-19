@@ -4,3 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+core-foundation = "0.10.0"
+core-services = "1.0.0"
+objc = "0.2.7"
