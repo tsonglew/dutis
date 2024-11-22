@@ -1,60 +1,39 @@
-extern crate core_foundation;
-extern crate objc;
+use std::env;
+use std::error::Error;
+use std::process;
 
-use core_foundation::array::CFArray;
-use core_foundation::base::{CFTypeRef, TCFType};
-use core_foundation::string::CFString;
-use core_services::{CFArrayRef, CFStringRef};
-
-#[link(name = "CoreServices", kind = "framework")]
-extern "C" {
-    fn LSCopyAllRoleHandlersForContentType(
-        inContentType: CFStringRef,
-        inRole: CFStringRef,
-    ) -> CFArrayRef;
+#[derive(Debug)]
+struct Config {
+    content_type: String,
 }
 
-pub fn get_all_role_handlers_for_content_type(
-    content_type: &str,
-    role: &str,
-) -> Option<Vec<String>> {
-    // Create CFStringRefs from Rust &str
-    let cf_content_type = CFString::new(content_type);
-    let cf_role = CFString::new(role);
+impl Config {
+    fn new(content_type: String) -> Config {
+        Config { content_type }
+    }
 
-    unsafe {
-        let handlers: CFArrayRef = LSCopyAllRoleHandlersForContentType(
-            cf_content_type.as_concrete_TypeRef(),
-            cf_role.as_concrete_TypeRef(),
-        );
-
-        if handlers.is_null() {
-            return None;
+    fn build(args: Vec<String>) -> Result<Config, &'static str> {
+        if args.len() < 2 {
+            return Err("not enough arguments");
         }
-
-        // Convert CFArrayRef to Vec<String>
-        let cf_array = CFArray::from_void(handlers as *const std::ffi::c_void);
-        let handlers_count = cf_array.len();
-        let mut result = Vec::with_capacity(handlers_count);
-
-        for handler in cf_array.iter() {
-            let cf_handler: CFString = TCFType::wrap_under_get_rule(handler as CFTypeRef);
-            result.push(cf_handler.to_string());
-        }
-
-        Some(result)
+        Ok(Config::new(args[1].clone()))
     }
 }
 
 fn main() {
-    let content_type = "public.jpeg"; // an example content type
-    let role = "all"; // an example role -- you might want to specify "viewer", "editor", etc.
-
-    if let Some(handlers) = get_all_role_handlers_for_content_type(content_type, role) {
-        for handler in handlers {
-            println!("Handler: {}", handler);
-        }
-    } else {
-        println!("No handlers found for the specified content type.");
+    let args = env::args().collect::<Vec<String>>();
+    let conf = Config::build(args).unwrap_or_else(|err| {
+        eprintln!("Problem parsing arguments: {}", err);
+        process::exit(1);
+    });
+    if let Err(e) = run(&conf) {
+        eprintln!("Application error: {}", e);
+        process::exit(1);
     }
+    println!("{:?}", conf);
+}
+
+fn run(conf: &Config) -> Result<(), Box<dyn Error>> {
+    println!("{:?}", conf);
+    Ok(())
 }
