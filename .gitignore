@@ -20,13 +20,13 @@
 # Go workspace file
 go.work
 main
-.idea/
 
-dist/
-
-
-# Added by cargo
-
-/target
-
+/target/
+**/*.rs.bk
+Cargo.lock
 .DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+dist/
