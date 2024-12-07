@@ -15,6 +15,10 @@ use crate::{BiMap, Config};
 
 #[link(name = "CoreServices", kind = "framework")]
 extern "C" {
+    // Note: These CoreServices APIs are deprecated since macOS 10.4–12.0.
+    // Apple has not provided direct replacements for these functionalities.
+    // While they continue to work, they may become unstable in future macOS versions.
+    
     fn UTTypeCreatePreferredIdentifierForTag(
         inTagClass: CFStringRef,
         inTag: CFStringRef,
