@@ -1,0 +1,15 @@
+[package]
+name = "dutis"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+core-foundation = "0.9.3"
+core-foundation-sys = "0.8.3"
+libc = "0.2.167"
+dialoguer = "0.10.4"
+console = "0.15.7"
+colored = "2.0.4"
+lazy_static = "1.4.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
