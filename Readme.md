@@ -9,6 +9,8 @@ A command-line tool to manage default applications for file types on macOS. It p
 
 > ⚠️ **Note**: This tool is designed specifically for macOS and will not work on other operating systems.
 
+> ⚠️ **Warning**: This tool relies on deprecated macOS CoreServices APIs (deprecated since macOS 10.4–12.0). While it currently works, it may become unstable or stop working in future macOS versions. Apple has not provided direct replacements for these APIs, making this the only available approach for programmatically managing file type associations.
+
 ## Features
 
 - 🎯 Set default applications for individual file extensions
