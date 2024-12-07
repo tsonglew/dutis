@@ -1,5 +1,10 @@
 # Dutis
 
+[![CI](https://github.com/tsonglew/dutis/actions/workflows/ci.yml/badge.svg)](https://github.com/tsonglew/dutis/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/tsonglew/dutis)](https://github.com/tsonglew/dutis/blob/master/LICENSE)
+[![Crates.io](https://img.shields.io/crates/v/dutis)](https://crates.io/crates/dutis)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/tsonglew/dutis)](https://github.com/tsonglew/dutis/releases)
+
 A command-line tool to manage default applications for file types on macOS. It provides an interactive interface to set default applications for individual file extensions or groups of related file types (like video, audio, images, etc.).
 
 > ⚠️ **Note**: This tool is designed specifically for macOS and will not work on other operating systems.

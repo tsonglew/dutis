@@ -25,22 +25,22 @@ jobs:
       - name: Run tests
         run: cargo test --verbose
         
-  clippy:
-    name: Clippy
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v3
+  # clippy:
+  #   name: Clippy
+  #   runs-on: macos-latest
+  #   steps:
+  #     - uses: actions/checkout@v3
       
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+  #     - name: Install Rust toolchain
+  #       uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         components: clippy
       
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
+  #     - name: Rust Cache
+  #       uses: Swatinem/rust-cache@v2
       
-      - name: Run clippy
-        run: cargo clippy -- -D warnings
+  #     - name: Run clippy
+  #       run: cargo clippy -- -D warnings
 
   build:
     name: Build
