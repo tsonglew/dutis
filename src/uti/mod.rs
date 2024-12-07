@@ -1,7 +1,6 @@
 use core_foundation::array::{CFArray, CFArrayRef};
 use core_foundation::base::{CFType, TCFType};
 use core_foundation::string::{CFString, CFStringRef};
-use libc::{sleep, ATTR_VOL_ALLOCATIONCLUMP};
 use std::collections::HashSet;
 use std::ffi::c_void;
 use std::path::Path;
@@ -18,7 +17,7 @@ extern "C" {
     // Note: These CoreServices APIs are deprecated since macOS 10.4–12.0.
     // Apple has not provided direct replacements for these functionalities.
     // While they continue to work, they may become unstable in future macOS versions.
-    
+
     fn UTTypeCreatePreferredIdentifierForTag(
         inTagClass: CFStringRef,
         inTag: CFStringRef,
