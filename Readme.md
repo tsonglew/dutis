@@ -22,19 +22,6 @@ A command-line tool to manage default applications for file types on macOS. It p
 
 ## Installation
 
-### Using Homebrew (recommended)
-
-```shell
-brew tap tsonglew/dutis
-brew install dutis
-```
-
-### Using Cargo
-
-```shell
-cargo install dutis
-```
-
 ### Building from Source
 
 ```shell
