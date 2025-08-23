@@ -2,7 +2,7 @@
 name = "dutis"
 version = "0.1.0"
 edition = "2021"
-description = "A comprehensive macOS application file extension viewer and default app setter written in Rust"
+description = "A comprehensive macOS application File Extension Manager and default app setter written in Rust"
 authors = ["Tsong Lew <tsonglew@gmail.com>"]
 license = "MIT"
 repository = "https://github.com/tsonglew/dutis"

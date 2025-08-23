@@ -1,4 +1,4 @@
-# Dutis - macOS Application File Extension Viewer
+# Dutis - macOS Application File Extension Manager
 
 A comprehensive Rust application for viewing file extensions supported by macOS applications and setting default applications for file types.
 
@@ -10,6 +10,7 @@ A comprehensive Rust application for viewing file extensions supported by macOS 
 - ⚙️ **Default App Setting**: Set default applications for file types using the `duti` command
 - 🚀 **UTI Detection**: Intelligent UTI (Uniform Type Identifier) detection with retry mechanisms
 - 📊 **Categorized Display**: File extensions are organized by category
+- 🔧 **Auto-dependency Management**: Automatically installs `duti` via Homebrew if not available
 
 ## Installation
 
@@ -17,14 +18,13 @@ A comprehensive Rust application for viewing file extensions supported by macOS 
 
 - macOS 10.14 or later
 - Rust 1.70 or later
-- `duti` command-line tool
+- Homebrew (for automatic duti installation)
 
-### Install duti
+### Automatic duti Installation
 
-```bash
-# Using Homebrew
-brew install duti
-```
+The application will automatically check for `duti` on startup and install it via Homebrew if it's not available. No manual installation is required!
+
+If you prefer to install manually:
 
 ### Build from Source
 

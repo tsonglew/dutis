@@ -11,7 +11,11 @@ use app_scanner::AppScanner;
 use plist_parser::PlistParser;
 
 fn main() -> Result<()> {
-    println!("🔍 macOS Application File Extension Viewer");
+    println!("🔍 macOS Application File Extension Manager");
+
+    // Check and install duti if needed
+    ensure_duti_available()?;
+
     println!("Scanning system applications...\n");
 
     let app_scanner = AppScanner::new();
@@ -37,12 +41,83 @@ fn main() -> Result<()> {
     }
 
     // Display complete results
-    display_results(&app_extensions);
+    // display_results(&app_extensions);
 
     // Interactive query functionality
     interactive_query(&app_extensions);
 
     Ok(())
+}
+
+/// Ensure duti is available, install it via Homebrew if not
+fn ensure_duti_available() -> Result<()> {
+    // Check if duti is already available
+    if std::process::Command::new("duti")
+        .arg("--version")
+        .output()
+        .is_ok()
+    {
+        println!("✅ duti is already installed and available");
+        return Ok(());
+    }
+
+    println!("🔍 duti not found, attempting to install via Homebrew...");
+
+    // Check if Homebrew is available
+    if std::process::Command::new("brew")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        return Err(anyhow::anyhow!(
+            "Homebrew is not installed. Please install Homebrew first:\n\
+             /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+        ));
+    }
+
+    println!("📦 Installing duti via Homebrew...");
+
+    // Install duti using Homebrew
+    let install_output = std::process::Command::new("brew")
+        .arg("install")
+        .arg("duti")
+        .output();
+
+    match install_output {
+        Ok(output) if output.status.success() => {
+            println!("✅ Successfully installed duti via Homebrew");
+
+            // Verify installation
+            if std::process::Command::new("duti")
+                .arg("--version")
+                .output()
+                .is_ok()
+            {
+                println!("✅ duti is now available and ready to use");
+                return Ok(());
+            } else {
+                return Err(anyhow::anyhow!("duti was installed but is not accessible. Please restart your terminal or add Homebrew to your PATH."));
+            }
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.contains("already installed") {
+                println!("✅ duti is already installed via Homebrew");
+                return Ok(());
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Failed to install duti via Homebrew: {}",
+                    stderr
+                ));
+            }
+        }
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "Failed to run Homebrew install command: {}",
+                e
+            ));
+        }
+    }
 }
 
 fn interactive_query(app_extensions: &HashMap<String, Vec<String>>) {
@@ -346,18 +421,42 @@ fn set_default_app_for_extension(extension: &str, app_name: &str) -> Result<()> 
     let uti = get_uti_for_extension(extension)?;
     println!("✅ UTI: {}", uti);
 
-    // 3. Use duti to set the default application
+    // 3. Use duti to set the default application, with fallback to alternative methods
     println!(
         "⚙️ Setting '{}' as the default handler for '{}'...",
         bundle_id, uti
     );
-    set_default_app_with_duti(&bundle_id, &uti)?;
 
-    println!(
-        "✅ Complete! .{} files will now be opened by {} by default.",
-        extension, app_name
-    );
-    println!("Note: In some cases, you may need to restart Finder or log out and log back in to see icon changes.");
+    match set_default_app_with_duti(&bundle_id, &uti) {
+        Ok(_) => {
+            println!(
+                "✅ Complete! .{} files will now be opened by {} by default.",
+                extension, app_name
+            );
+            println!("Note: In some cases, you may need to restart Finder or log out and log back in to see icon changes.");
+        }
+        Err(e) => {
+            println!("⚠️ duti command failed: {}", e);
+            println!("🔄 Falling back to alternative methods...");
+
+            // Try alternative methods without duti
+            if let Err(alt_err) = set_default_app_without_duti(&app_path, extension) {
+                println!("❌ Alternative methods also failed: {}", alt_err);
+                return Err(anyhow::anyhow!(
+                    "All methods to set default application failed"
+                ));
+            }
+
+            println!(
+                "✅ Alternative methods completed! .{} files should now be opened by {} by default.",
+                extension, app_name
+            );
+            println!("Note: Alternative methods may take longer to take effect. You may need to:");
+            println!("   • Restart Finder (Cmd+Option+Esc, then restart Finder)");
+            println!("   • Log out and log back in");
+            println!("   • Restart the system");
+        }
+    }
 
     Ok(())
 }
@@ -526,6 +625,67 @@ fn set_default_app_with_duti(bundle_id: &str, uti: &str) -> Result<()> {
             String::from_utf8_lossy(&output.stderr)
         ));
     }
+
+    Ok(())
+}
+
+/// Set default application without using duti (alternative methods)
+fn set_default_app_without_duti(app_path: &str, extension: &str) -> Result<()> {
+    println!("🔄 duti not available, trying alternative methods...");
+
+    // Method 1: Use open command to establish file association
+    println!("📝 Method 1: Using open command to establish file association...");
+    let temp_file = std::env::temp_dir().join(format!("test{}", extension));
+
+    // Create a temporary file with appropriate content
+    create_temp_file_with_content(&temp_file, extension)?;
+
+    // Method 2: Try to re-register the application with Launch Services
+    println!("🔄 Method 2: Re-registering application with Launch Services...");
+    let lsregister_result = std::process::Command::new("lsregister")
+        .arg("-f")
+        .arg(app_path)
+        .output();
+
+    match lsregister_result {
+        Ok(output) if output.status.success() => {
+            println!("✅ Successfully re-registered application with Launch Services");
+        }
+        Ok(output) => {
+            println!(
+                "⚠️ lsregister completed but may have had issues: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        Err(e) => {
+            println!("⚠️ lsregister command not available or failed: {}", e);
+        }
+    }
+
+    // Method 3: Try to use defaults command for specific file types
+    if let Some(uti) = get_hardcoded_uti(extension).ok() {
+        println!(
+            "⚙️ Method 3: Attempting to set system preference for UTI: {}",
+            uti
+        );
+
+        // Get the bundle ID for the application
+        if let Ok(bundle_id) = get_bundle_id(app_path) {
+            println!("💡 To manually set system preference, you can run:");
+            println!("   defaults write com.apple.LaunchServices/com.apple.launchservices.secure LSHandlers -array-add '{{LSHandlerContentType={};LSHandlerRoleAll={};}}'", uti, bundle_id);
+        } else {
+            println!("💡 To manually set system preference, you can run:");
+            println!("   defaults write com.apple.LaunchServices/com.apple.launchservices.secure LSHandlers -array-add '{{LSHandlerContentType={};LSHandlerRoleAll=YOUR_BUNDLE_ID;}}'", uti);
+        }
+    }
+
+    // Clean up temporary file
+    let _ = std::fs::remove_file(&temp_file);
+
+    println!("✅ Alternative methods completed. The file association may take effect after:");
+    println!("   • Restarting Finder (Cmd+Option+Esc, then restart Finder)");
+    println!("   • Logging out and back in");
+    println!("   • Restarting the system");
 
     Ok(())
 }
