@@ -26,10 +26,6 @@ A comprehensive Rust application for viewing file extensions supported by macOS 
 ```bash
 # Install dutis directly from Homebrew
 brew install tsonglew/dutis/dutis
-
-# Or if you have the tap added
-brew tap tsonglew/dutis
-brew install dutis
 ```
 
 ### Automatic duti Installation
@@ -52,16 +48,10 @@ cargo build --release
 cargo run
 ```
 
-## Usage
-
-### Basic Usage
+### Install from binary
 
 ```bash
-# Run the application
-cargo run
-
-# Or run the built binary
-./target/release/dutis
+cargo install --path .
 ```
 
 ### Interactive Mode
