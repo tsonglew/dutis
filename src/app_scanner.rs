@@ -8,11 +8,11 @@ impl AppScanner {
         Self
     }
 
-    /// 扫描系统中的应用程序
+    /// Scan applications in the system
     pub fn scan_applications(&self) -> Result<Vec<String>> {
         let mut app_paths = Vec::new();
 
-        // 使用 mdfind 命令查找应用程序，参考原脚本的逻辑
+        // Use mdfind command to find applications, following the logic of the original script
         let output = Command::new("mdfind")
             .arg("kMDItemKind == 'Application'")
             .arg("-onlyin")
@@ -30,7 +30,7 @@ impl AppScanner {
             }
         }
 
-        // 添加用户目录中的应用程序
+        // Add applications from user directory
         if let Ok(home) = std::env::var("HOME") {
             let user_apps = format!("{}/Applications", home);
             if let Ok(entries) = std::fs::read_dir(&user_apps) {
@@ -45,14 +45,14 @@ impl AppScanner {
             }
         }
 
-        // 去重并排序
+        // Remove duplicates and sort
         app_paths.sort();
         app_paths.dedup();
 
         Ok(app_paths)
     }
 
-    /// 获取应用程序的显示名称
+    /// Get the display name of the application
     pub fn get_app_display_name(&self, app_path: &str) -> Option<String> {
         Path::new(app_path)
             .file_stem()

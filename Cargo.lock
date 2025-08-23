@@ -9,16 +9,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0674a1ddeecb70197781e945de4b3b8ffb61fa939a5597bcf48503737663100"
 
 [[package]]
-name = "app_extension_viewer"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "colored",
- "thiserror",
- "walkdir",
-]
-
-[[package]]
 name = "colored"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -26,6 +16,16 @@ checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "dutis"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "colored",
+ "thiserror",
+ "walkdir",
 ]
 
 [[package]]

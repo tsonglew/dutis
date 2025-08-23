@@ -37,18 +37,39 @@ echo "✅ Bundle ID: ${BUNDLE_ID}"
 # 2. 获取文件后缀对应的 UTI (Uniform Type Identifier)
 # Launch Services 是通过 UTI 来识别文件类型的. e.g., public.plain-text
 echo "🔎 正在查找 .${FILE_EXTENSION} 的 UTI..."
+
 # 创建一个临时文件来获取 UTI
 TEMP_FILE="temp_file_for_uti.${FILE_EXTENSION}"
 touch "$TEMP_FILE"
-UTI=$(mdls -name kMDItemContentType -r "$TEMP_FILE")
-# 清理临时文件
-rm "$TEMP_FILE"
 
-if [ -z "$UTI" ]; then
-    echo "❌ 错误: 无法获取 .${FILE_EXTENSION} 的 UTI。这可能是一个未知的后缀。"
-    exit 1
-fi
-echo "✅ UTI: ${UTI}"
+# 重试循环：最多重试 10 次，每次间隔 1 秒
+MAX_RETRIES=10
+RETRY_COUNT=0
+UTI=""
+
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    UTI=$(mdls -name kMDItemContentType -r "$TEMP_FILE" 2>/dev/null)
+    
+    if [ -n "$UTI" ] && [ "$UTI" != "(null)" ]; then
+        echo "✅ UTI: ${UTI}"
+        break
+    else
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+            echo "⏳ 第 ${RETRY_COUNT} 次尝试获取 UTI 失败，等待 1 秒后重试..."
+            sleep 1
+        else
+            echo "❌ 经过 ${MAX_RETRIES} 次尝试，仍无法获取有效的 UTI。"
+            echo "❌ 错误: 无法获取 .${FILE_EXTENSION} 的 UTI。这可能是一个未知的后缀。"
+            # 清理临时文件
+            rm -f "$TEMP_FILE"
+            exit 1
+        fi
+    fi
+done
+
+# 清理临时文件
+rm -f "$TEMP_FILE"
 
 # 3. 使用 duti 设置默认应用
 # duti -s <bundle_id> <uti> <role>

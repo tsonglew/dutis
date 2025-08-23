@@ -11,17 +11,17 @@ use app_scanner::AppScanner;
 use plist_parser::PlistParser;
 
 fn main() -> Result<()> {
-    println!("🔍 macOS 应用程序文件扩展名查看器");
-    println!("正在扫描系统应用程序...\n");
+    println!("🔍 macOS Application File Extension Viewer");
+    println!("Scanning system applications...\n");
 
     let app_scanner = AppScanner::new();
     let plist_parser = PlistParser::new();
 
-    // 扫描应用程序
+    // Scan applications
     let apps = app_scanner.scan_applications()?;
-    println!("找到 {} 个应用程序\n", apps.len());
+    println!("Found {} applications\n", apps.len());
 
-    // 分析每个应用程序支持的文件扩展名
+    // Analyze file extensions supported by each application
     let mut app_extensions: HashMap<String, Vec<String>> = HashMap::new();
 
     for app_path in apps {
@@ -36,23 +36,23 @@ fn main() -> Result<()> {
         }
     }
 
-    // 显示完整结果
+    // Display complete results
     display_results(&app_extensions);
 
-    // 交互式查询功能
+    // Interactive query functionality
     interactive_query(&app_extensions);
 
     Ok(())
 }
 
 fn interactive_query(app_extensions: &HashMap<String, Vec<String>>) {
-    println!("\n🎯 交互式查询模式");
-    println!("输入文件后缀（如: py, js, txt）来查找支持的应用程序");
-    println!("输入 'quit' 或 'exit' 退出程序");
-    println!("输入 'debug' 显示调试信息\n");
+    println!("\n🎯 Interactive Query Mode");
+    println!("Enter file extension (e.g., py, js, txt) to find supporting applications");
+    println!("Enter 'quit' or 'exit' to exit the program");
+    println!("Enter 'debug' to show debug information\n");
 
     loop {
-        print!("请输入文件后缀: ");
+        print!("Please enter file extension: ");
         io::stdout().flush().unwrap();
 
         let mut input = String::new();
@@ -62,13 +62,13 @@ fn interactive_query(app_extensions: &HashMap<String, Vec<String>>) {
 
         match extension.as_str() {
             "quit" | "exit" | "q" => {
-                println!("👋 再见！");
+                println!("👋 Goodbye!");
                 break;
             }
             "debug" => {
-                println!("\n🔍 调试信息:");
-                println!("扫描到的应用程序数量: {}", app_extensions.len());
-                println!("前10个应用程序及其支持的扩展名:");
+                println!("\n🔍 Debug Information:");
+                println!("Number of scanned applications: {}", app_extensions.len());
+                println!("First 10 applications and their supported extensions:");
 
                 let mut count = 0;
                 for (app_name, extensions) in app_extensions.iter().take(10) {
@@ -80,40 +80,49 @@ fn interactive_query(app_extensions: &HashMap<String, Vec<String>>) {
                     count += 1;
                 }
                 if count < app_extensions.len() {
-                    println!("  ... 还有 {} 个应用程序", app_extensions.len() - count);
+                    println!(
+                        "  ... and {} more applications",
+                        app_extensions.len() - count
+                    );
                 }
                 println!();
                 continue;
             }
             "" => {
-                println!("❌ 请输入有效的文件后缀");
+                println!("❌ Please enter a valid file extension");
                 continue;
             }
             _ => {
-                // 确保扩展名以 . 开头
+                // Ensure extension starts with a dot
                 let ext = if extension.starts_with('.') {
                     extension.clone()
                 } else {
                     format!(".{}", extension)
                 };
 
-                println!("🔍 正在查找支持 {} 文件类型的应用程序...", ext.yellow());
+                println!(
+                    "🔍 Searching for applications that support {} file type...",
+                    ext.yellow()
+                );
 
-                // 查找支持该扩展名的应用程序
+                // Find applications that support this extension
                 let supporting_apps = find_apps_for_extension(app_extensions, &ext);
 
                 if supporting_apps.is_empty() {
-                    println!("❌ 未找到支持 {} 文件类型的应用程序", ext.yellow());
+                    println!(
+                        "❌ No applications found that support {} file type",
+                        ext.yellow()
+                    );
 
-                    // 显示一些调试信息
-                    println!("💡 调试提示:");
-                    println!("   • 检查扩展名是否正确（应该是 {}）", ext);
-                    println!("   • 输入 'debug' 查看扫描到的应用程序信息");
+                    // Show some debug information
+                    println!("💡 Debug Tips:");
+                    println!("   • Check if the extension is correct (should be {})", ext);
+                    println!("   • Enter 'debug' to view scanned application information");
 
-                    // 尝试模糊匹配
+                    // Try fuzzy matching
                     let fuzzy_matches = find_fuzzy_matches(app_extensions, &extension);
                     if !fuzzy_matches.is_empty() {
-                        println!("🔍 找到可能的模糊匹配:");
+                        println!("🔍 Found possible fuzzy matches:");
                         for (app_name, extensions) in fuzzy_matches.iter().take(5) {
                             println!(
                                 "   • {}: {}",
@@ -124,7 +133,7 @@ fn interactive_query(app_extensions: &HashMap<String, Vec<String>>) {
                     }
                 } else {
                     println!(
-                        "✅ 找到 {} 个支持 {} 文件类型的应用程序:",
+                        "✅ Found {} applications that support {} file type:",
                         supporting_apps.len(),
                         ext.yellow()
                     );
@@ -133,10 +142,10 @@ fn interactive_query(app_extensions: &HashMap<String, Vec<String>>) {
                         println!("   {}. {}", i + 1, app_name.bright_blue());
                     }
 
-                    // 询问用户是否要设置默认应用
-                    println!("\n🎯 是否要设置默认应用？");
-                    println!("输入应用程序编号来设置默认应用，或按回车跳过");
-                    print!("请选择 (1-{}): ", supporting_apps.len());
+                    // Ask user if they want to set default application
+                    println!("\n🎯 Do you want to set a default application?");
+                    println!("Enter application number to set as default, or press Enter to skip");
+                    print!("Please choose (1-{}): ", supporting_apps.len());
                     io::stdout().flush().unwrap();
 
                     let mut choice = String::new();
@@ -148,22 +157,22 @@ fn interactive_query(app_extensions: &HashMap<String, Vec<String>>) {
                             if app_index >= 1 && app_index <= supporting_apps.len() {
                                 let selected_app = &supporting_apps[app_index - 1];
                                 if let Err(e) = set_default_app_for_extension(&ext, selected_app) {
-                                    println!("❌ 设置默认应用失败: {}", e);
+                                    println!("❌ Failed to set default application: {}", e);
                                 } else {
                                     println!(
-                                        "✅ 成功设置 {} 为 {} 文件的默认应用！",
+                                        "✅ Successfully set {} as the default application for {} files!",
                                         selected_app.bright_green(),
                                         ext.yellow()
                                     );
                                 }
                             } else {
                                 println!(
-                                    "❌ 无效的选择，请输入 1-{} 之间的数字",
+                                    "❌ Invalid choice, please enter a number between 1-{}",
                                     supporting_apps.len()
                                 );
                             }
                         } else {
-                            println!("❌ 无效的输入，请输入数字");
+                            println!("❌ Invalid input, please enter a number");
                         }
                     }
                 }
@@ -179,7 +188,7 @@ fn find_apps_for_extension(
 ) -> Vec<String> {
     let mut supporting_apps = Vec::new();
 
-    // 移除扩展名开头的点号，因为 plist 中存储的是不带点的扩展名
+    // Remove the leading dot from extension, as plist stores extensions without dots
     let clean_extension = extension.trim_start_matches('.');
 
     for (app_name, extensions) in app_extensions {
@@ -199,7 +208,7 @@ fn find_fuzzy_matches(
     let mut matches = Vec::new();
 
     for (app_name, extensions) in app_extensions {
-        // 检查应用程序名称是否包含搜索词
+        // Check if application name contains the search term
         if app_name
             .to_lowercase()
             .contains(&search_term.to_lowercase())
@@ -208,7 +217,7 @@ fn find_fuzzy_matches(
             continue;
         }
 
-        // 检查扩展名是否包含搜索词
+        // Check if extension contains the search term
         if extensions
             .iter()
             .any(|ext| ext.to_lowercase().contains(&search_term.to_lowercase()))
@@ -222,7 +231,7 @@ fn find_fuzzy_matches(
 }
 
 fn display_results(app_extensions: &HashMap<String, Vec<String>>) {
-    println!("📱 应用程序支持的文件扩展名:");
+    println!("📱 File Extensions Supported by Applications:");
     println!("{}", "=".repeat(60));
 
     let mut sorted_apps: Vec<_> = app_extensions.iter().collect();
@@ -230,9 +239,9 @@ fn display_results(app_extensions: &HashMap<String, Vec<String>>) {
 
     for (app_name, extensions) in sorted_apps {
         println!("\n🎯 {}", app_name.bright_blue().bold());
-        println!("   📁 支持的文件扩展名:");
+        println!("   📁 Supported file extensions:");
 
-        // 按扩展名类型分组显示
+        // Group extensions by type for display
         let mut grouped_extensions: HashMap<&str, Vec<&str>> = HashMap::new();
 
         for ext in extensions {
@@ -254,53 +263,53 @@ fn display_results(app_extensions: &HashMap<String, Vec<String>>) {
     }
 
     println!("\n{}", "=".repeat(60));
-    println!("📊 统计信息:");
-    println!("   • 总应用程序数量: {}", app_extensions.len());
+    println!("📊 Statistics:");
+    println!("   • Total applications: {}", app_extensions.len());
 
     let total_extensions: usize = app_extensions.values().map(|v| v.len()).sum();
-    println!("   • 总支持扩展名数量: {}", total_extensions);
+    println!("   • Total supported extensions: {}", total_extensions);
 
     let unique_extensions: std::collections::HashSet<_> =
         app_extensions.values().flat_map(|v| v.iter()).collect();
-    println!("   • 唯一扩展名数量: {}", unique_extensions.len());
+    println!("   • Unique extensions: {}", unique_extensions.len());
 }
 
 fn get_extension_category(extension: &str) -> &'static str {
     match extension.to_lowercase().as_str() {
         "py" | "js" | "ts" | "jsx" | "tsx" | "rs" | "cpp" | "c" | "h" | "java" | "kt" | "swift"
-        | "go" | "php" | "rb" | "pl" | "sh" => "编程语言",
+        | "go" | "php" | "rb" | "pl" | "sh" => "Programming Languages",
         "html" | "css" | "scss" | "sass" | "less" | "xml" | "json" | "yaml" | "toml" => {
-            "Web/标记语言"
+            "Web/Markup Languages"
         }
-        "txt" | "md" | "log" | "rtf" => "文本文档",
-        "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" => "办公文档",
-        "jpg" | "jpeg" | "png" | "gif" | "bmp" | "svg" | "ico" | "tiff" | "webp" => "图像文件",
+        "txt" | "md" | "log" | "rtf" => "Text Documents",
+        "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" => "Office Documents",
+        "jpg" | "jpeg" | "png" | "gif" | "bmp" | "svg" | "ico" | "tiff" | "webp" => "Image Files",
         "mp3" | "mp4" | "avi" | "mov" | "wmv" | "flv" | "mkv" | "wav" | "aac" | "ogg" => {
-            "音视频文件"
+            "Audio/Video Files"
         }
-        "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" => "压缩文件",
-        "psd" | "ai" | "sketch" | "fig" => "设计文件",
-        _ => "其他文件",
+        "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" => "Compressed Files",
+        "psd" | "ai" | "sketch" | "fig" => "Design Files",
+        _ => "Other Files",
     }
 }
 
 fn get_category_color(category: &str) -> colored::Color {
     match category {
-        "编程语言" => colored::Color::Green,
-        "Web/标记语言" => colored::Color::Blue,
-        "文本文档" => colored::Color::Cyan,
-        "办公文档" => colored::Color::Magenta,
-        "图像文件" => colored::Color::Yellow,
-        "音视频文件" => colored::Color::Red,
-        "压缩文件" => colored::Color::BrightBlack,
-        "设计文件" => colored::Color::BrightMagenta,
+        "Programming Languages" => colored::Color::Green,
+        "Web/Markup Languages" => colored::Color::Blue,
+        "Text Documents" => colored::Color::Cyan,
+        "Office Documents" => colored::Color::Magenta,
+        "Image Files" => colored::Color::Yellow,
+        "Audio/Video Files" => colored::Color::Red,
+        "Compressed Files" => colored::Color::BrightBlack,
+        "Design Files" => colored::Color::BrightMagenta,
         _ => colored::Color::White,
     }
 }
 
-/// 设置指定文件扩展名的默认应用程序
+/// Set the default application for a specified file extension
 fn set_default_app_for_extension(extension: &str, app_name: &str) -> Result<()> {
-    // 在 macOS 上，我们需要找到应用程序的完整路径
+    // On macOS, we need to find the full path of the application
     let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
     let app_paths = vec![
         "/Applications".to_string(),
@@ -310,7 +319,7 @@ fn set_default_app_for_extension(extension: &str, app_name: &str) -> Result<()> 
 
     let mut app_full_path = None;
 
-    // 查找应用程序的完整路径
+    // Find the full path of the application
     for base_path in &app_paths {
         let app_path = format!("{}/{}.app", base_path, app_name);
         if std::path::Path::new(&app_path).exists() {
@@ -319,44 +328,203 @@ fn set_default_app_for_extension(extension: &str, app_name: &str) -> Result<()> 
         }
     }
 
-    let app_path =
-        app_full_path.ok_or_else(|| anyhow::anyhow!("找不到应用程序 '{}' 的路径", app_name))?;
+    let app_path = app_full_path
+        .ok_or_else(|| anyhow::anyhow!("Could not find path for application '{}'", app_name))?;
 
-    // 使用 macOS 的 Launch Services 来设置默认应用
-    // 这需要创建一个临时文件来测试关联
-    let temp_dir = std::env::temp_dir();
-    let temp_file = temp_dir.join(format!("test{}", extension));
+    println!(
+        "🚀 Starting to set default application for .{} files...",
+        extension
+    );
 
-    // 创建临时文件
-    std::fs::write(&temp_file, "test")?;
+    // 1. Get the Bundle Identifier of the application
+    println!("🔎 Looking for Bundle ID of '{}'...", app_path);
+    let bundle_id = get_bundle_id(&app_path)?;
+    println!("✅ Bundle ID: {}", bundle_id);
 
-    // 使用 open 命令设置默认应用
-    let output = std::process::Command::new("open")
-        .arg("-a")
-        .arg(&app_path)
-        .arg(&temp_file)
+    // 2. Get the UTI corresponding to the file extension
+    println!("🔎 Looking for UTI of .{}...", extension);
+    let uti = get_uti_for_extension(extension)?;
+    println!("✅ UTI: {}", uti);
+
+    // 3. Use duti to set the default application
+    println!(
+        "⚙️ Setting '{}' as the default handler for '{}'...",
+        bundle_id, uti
+    );
+    set_default_app_with_duti(&bundle_id, &uti)?;
+
+    println!(
+        "✅ Complete! .{} files will now be opened by {} by default.",
+        extension, app_name
+    );
+    println!("Note: In some cases, you may need to restart Finder or log out and log back in to see icon changes.");
+
+    Ok(())
+}
+
+/// Get the Bundle ID of the application
+fn get_bundle_id(app_path: &str) -> Result<String> {
+    let output = std::process::Command::new("mdls")
+        .arg("-name")
+        .arg("kMDItemCFBundleIdentifier")
+        .arg("-r")
+        .arg(app_path)
         .output()?;
 
     if !output.status.success() {
         return Err(anyhow::anyhow!(
-            "设置默认应用失败: {}",
+            "Could not get Bundle ID of application: {}",
             String::from_utf8_lossy(&output.stderr)
         ));
     }
 
-    // 清理临时文件
-    let _ = std::fs::remove_file(temp_file);
+    let bundle_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if bundle_id.is_empty() {
+        return Err(anyhow::anyhow!(
+            "Could not get Bundle ID of application. Please check if the path is a valid .app program."
+        ));
+    }
 
-    // 使用 duti 命令来设置默认应用（如果可用）
-    if let Ok(duti_output) = std::process::Command::new("duti")
-        .arg("-s")
-        .arg(&app_path)
-        .arg(extension)
-        .output()
-    {
-        if duti_output.status.success() {
-            println!("💡 使用 duti 命令成功设置默认应用");
+    Ok(bundle_id)
+}
+
+/// Get the UTI corresponding to the file extension, with retry mechanism
+fn get_uti_for_extension(extension: &str) -> Result<String> {
+    const MAX_RETRIES: u32 = 10;
+    let temp_file = std::env::temp_dir().join(format!("temp_file_for_uti.{}", extension));
+
+    // Create temporary file with content
+    create_temp_file_with_content(&temp_file, extension)?;
+
+    let mut retry_count = 0;
+    let mut uti = String::new();
+
+    while retry_count < MAX_RETRIES {
+        // Wait a bit for the system to recognize the file type
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        let output = std::process::Command::new("mdls")
+            .arg("-name")
+            .arg("kMDItemContentType")
+            .arg("-r")
+            .arg(&temp_file)
+            .output();
+
+        match output {
+            Ok(output) if output.status.success() => {
+                uti = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !uti.is_empty() && uti != "(null)" {
+                    break;
+                }
+            }
+            _ => {}
         }
+
+        retry_count += 1;
+        if retry_count < MAX_RETRIES {
+            println!(
+                "⏳ Attempt {} to get UTI failed, waiting 1 second before retrying...",
+                retry_count
+            );
+        }
+    }
+
+    // Clean up temporary file
+    let _ = std::fs::remove_file(&temp_file);
+
+    if uti.is_empty() || uti == "(null)" {
+        // If retry fails, use hardcoded UTI mapping
+        uti = get_hardcoded_uti(extension)?;
+    }
+
+    Ok(uti)
+}
+
+/// Create temporary file with appropriate content
+fn create_temp_file_with_content(temp_file: &std::path::Path, extension: &str) -> Result<()> {
+    let content = match extension.to_lowercase().as_str() {
+        "txt" | "md" | "log" => "This is a text file for UTI detection.".as_bytes().to_vec(),
+        "pdf" => {
+            // Create minimal PDF file content
+            r#"%PDF-1.4
+1 0 obj
+<</Type/Catalog/Pages 2 0 R>>
+endobj
+2 0 obj
+<</Type/Pages/Kids[]/Count 0>>
+endobj
+xref
+0 3
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+trailer
+<</Size 3/Root 1 0 R>>
+startxref
+116
+%%EOF"#
+                .as_bytes()
+                .to_vec()
+        }
+        "jpg" | "jpeg" => vec![0xFF, 0xD8, 0xFF, 0xE0],
+        "png" => vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+        "gif" => b"GIF89a".to_vec(),
+        "bmp" => b"BM".to_vec(),
+        "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" => vec![0x50, 0x4B, 0x03, 0x04],
+        _ => "Content for UTI detection.".as_bytes().to_vec(),
+    };
+
+    std::fs::write(temp_file, content)?;
+    Ok(())
+}
+
+/// Get hardcoded UTI mapping
+fn get_hardcoded_uti(extension: &str) -> Result<String> {
+    let uti = match extension.to_lowercase().as_str() {
+        "txt" | "md" | "log" => "public.plain-text",
+        "pdf" => "com.adobe.pdf",
+        "jpg" | "jpeg" => "public.jpeg",
+        "png" => "public.png",
+        "gif" => "com.compuserve.gif",
+        "bmp" => "com.microsoft.bmp",
+        "doc" => "com.microsoft.word.doc",
+        "docx" => "org.openxmlformats.wordprocessingml.document",
+        "xls" => "com.microsoft.excel.xls",
+        "xlsx" => "org.openxmlformats.spreadsheetml.sheet",
+        "ppt" => "com.microsoft.powerpoint.ppt",
+        "pptx" => "org.openxmlformats.presentationml.presentation",
+        "zip" => "public.zip-archive",
+        "tar" => "public.tar-archive",
+        "gz" => "org.gnu.gnu-zip-archive",
+        "mp3" => "public.mp3",
+        "mp4" => "public.mpeg-4",
+        "avi" => "public.avi",
+        "mov" => "com.apple.quicktime-movie",
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Could not get UTI for .{}. This might be an unknown extension.",
+                extension
+            ))
+        }
+    };
+
+    Ok(uti.to_string())
+}
+
+/// Use duti to set the default application
+fn set_default_app_with_duti(bundle_id: &str, uti: &str) -> Result<()> {
+    let output = std::process::Command::new("duti")
+        .arg("-s")
+        .arg(bundle_id)
+        .arg(uti)
+        .arg("all")
+        .output()?;
+
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "Failed to set default application using duti: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
 
     Ok(())
