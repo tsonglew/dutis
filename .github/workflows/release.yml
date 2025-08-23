@@ -5,29 +5,46 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
-  release:
+  build-and-release:
     runs-on: macos-latest
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
+        
       - name: Setup Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          target: x86_64-apple-darwin
-
-      - name: Build
-        run: cargo build --release
-
+          targets: x86_64-apple-darwin
+          
+      - name: Install target
+        run: rustup target add x86_64-apple-darwin
+          
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          
+      - name: Build release binary
+        run: |
+          cargo build --release --target x86_64-apple-darwin
+          
       - name: Create release
         uses: actions/create-release@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.DUTIS_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
+          release_name: Release ${{ github.ref_name }}
           body: |
             ## What's Changed
             
@@ -60,13 +77,13 @@ jobs:
             ```
           draft: false
           prerelease: false
-
-      - name: Upload binary
+          
+      - name: Upload binary asset
         uses: actions/upload-release-asset@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.DUTIS_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./target/release/dutis
+          asset_path: ./target/x86_64-apple-darwin/release/dutis
           asset_name: dutis-macos-x86_64
           asset_content_type: application/octet-stream
