@@ -68,39 +68,5 @@ impl PlistParser {
         Ok(result)
     }
 
-    /// Get the display name of the application
-    pub fn get_app_display_name(&self, plist_path: &str) -> Result<Option<String>> {
-        if !std::path::Path::new(plist_path).exists() {
-            return Ok(None);
-        }
 
-        let output = Command::new("/usr/libexec/PlistBuddy")
-            .arg("-c")
-            .arg("Print :CFBundleDisplayName")
-            .arg(plist_path)
-            .output();
-
-        if let Ok(output) = output {
-            let content = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !content.is_empty() && !content.contains("Does Not Exist") {
-                return Ok(Some(content));
-            }
-        }
-
-        // If no display name, try to get bundle name
-        let output = Command::new("/usr/libexec/PlistBuddy")
-            .arg("-c")
-            .arg("Print :CFBundleName")
-            .arg(plist_path)
-            .output();
-
-        if let Ok(output) = output {
-            let content = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !content.is_empty() && !content.contains("Does Not Exist") {
-                return Ok(Some(content));
-            }
-        }
-
-        Ok(None)
-    }
 }
