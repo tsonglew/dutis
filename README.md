@@ -2,6 +2,8 @@
 
 A comprehensive Rust application for viewing file extensions supported by macOS applications and setting default applications for file types.
 
+[![Release](https://github.com/tsonglew/dutis/actions/workflows/release.yml/badge.svg)](https://github.com/tsonglew/dutis/actions/workflows/release.yml)
+
 ## Features
 
 - 🔍 **Scan System Applications**: Automatically discovers all installed applications on macOS
