@@ -9,6 +9,10 @@ repository = "https://github.com/tsonglew/dutis"
 keywords = ["macos", "file-extensions", "applications", "uti", "default-apps"]
 categories = ["command-line-utilities", "system"]
 
+[[bin]]
+name = "dutis"
+path = "src/main.rs"
+
 [dependencies]
 # Error handling
 anyhow = "1.0"

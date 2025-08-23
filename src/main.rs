@@ -11,6 +11,13 @@ use app_scanner::AppScanner;
 use plist_parser::PlistParser;
 
 fn main() -> Result<()> {
+    // Check for help flag
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 && (args[1] == "--help" || args[1] == "-h") {
+        print_help();
+        return Ok(());
+    }
+
     println!("🔍 macOS Application File Extension Manager");
 
     // Check and install duti if needed
@@ -23,7 +30,10 @@ fn main() -> Result<()> {
 
     // Scan applications
     let apps = app_scanner.scan_applications()?;
-    println!("Found {} applications\n", apps.len());
+    println!(
+        "Found {} applications, Loading supported file extensions...\n",
+        apps.len()
+    );
 
     // Analyze file extensions supported by each application
     let mut app_extensions: HashMap<String, Vec<String>> = HashMap::new();
@@ -118,6 +128,41 @@ fn ensure_duti_available() -> Result<()> {
             ));
         }
     }
+}
+
+/// Print help information
+fn print_help() {
+    println!("Dutis - macOS Application File Extension Manager");
+    println!();
+    println!("USAGE:");
+    println!("    dutis [OPTIONS]");
+    println!();
+    println!("OPTIONS:");
+    println!("    -h, --help    Print this help message");
+    println!();
+    println!("DESCRIPTION:");
+    println!("    A comprehensive Rust application for viewing file extensions supported by");
+    println!("    macOS applications and setting default applications for file types.");
+    println!();
+    println!("    Features:");
+    println!("    • Scan system applications and their supported file extensions");
+    println!("    • Interactive query mode to find apps for specific file types");
+    println!("    • Set default applications for file types");
+    println!("    • Automatic duti installation via Homebrew");
+    println!("    • Intelligent UTI detection with retry mechanisms");
+    println!();
+    println!("    The application will automatically install the 'duti' command-line tool");
+    println!("    if it's not available on your system.");
+    println!();
+    println!("EXAMPLES:");
+    println!("    dutis                    # Start interactive mode");
+    println!("    dutis --help            # Show this help message");
+    println!();
+    println!("REQUIREMENTS:");
+    println!("    • macOS 10.14 or later");
+    println!("    • Homebrew (for automatic duti installation)");
+    println!();
+    println!("For more information, visit: https://github.com/tsonglew/dutis");
 }
 
 fn interactive_query(app_extensions: &HashMap<String, Vec<String>>) {

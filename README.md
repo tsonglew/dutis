@@ -17,14 +17,24 @@ A comprehensive Rust application for viewing file extensions supported by macOS 
 ### Prerequisites
 
 - macOS 10.14 or later
-- Rust 1.70 or later
 - Homebrew (for automatic duti installation)
+
+### Via Homebrew (Recommended)
+
+```bash
+# Install dutis directly from Homebrew
+brew install tsonglew/dutis/dutis
+
+# Or if you have the tap added
+brew tap tsonglew/dutis
+brew install dutis
+```
 
 ### Automatic duti Installation
 
 The application will automatically check for `duti` on startup and install it via Homebrew if it's not available. No manual installation is required!
 
-If you prefer to install manually:
+### Manual Installation
 
 ### Build from Source
 

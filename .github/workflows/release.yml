@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: x86_64-apple-darwin
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Create release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          body: |
+            ## What's Changed
+            
+            This release includes:
+            - Automatic duti installation via Homebrew
+            - Improved default app setting with fallback methods
+            - Enhanced UTI detection with retry mechanisms
+            - English localization
+            - Better error handling and user feedback
+            
+            ## Installation
+            
+            ### Via Homebrew (Recommended)
+            ```bash
+            brew install tsonglew/dutis/dutis
+            ```
+            
+            ### From Source
+            ```bash
+            git clone https://github.com/tsonglew/dutis.git
+            cd dutis
+            cargo install --path .
+            ```
+            
+            ## Usage
+            
+            ```bash
+            dutis                    # Start interactive mode
+            dutis --help            # Show help
+            ```
+          draft: false
+          prerelease: false
+
+      - name: Upload binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./target/release/dutis
+          asset_name: dutis-macos-x86_64
+          asset_content_type: application/octet-stream
