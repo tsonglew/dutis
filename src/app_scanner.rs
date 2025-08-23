@@ -51,16 +51,4 @@ impl AppScanner {
 
         Ok(app_paths)
     }
-
-    /// Get the display name of the application
-    pub fn get_app_display_name(&self, app_path: &str) -> Option<String> {
-        Path::new(app_path)
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .map(|s| s.to_string())
-    }
 }
-
-use std::ffi::OsStr;
-use std::fs;
-use std::path::Path;
