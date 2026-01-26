@@ -2,7 +2,7 @@
 
 # Find all .app bundles in common application directories.
 # Remove -onlyin flags to search the entire system (slower).
-app_paths=$(mdfind "kMDItemKind == 'Application'" -onlyin /System/Applications -onlyin /Applications)
+app_paths=$(mdfind "kMDItemContentType == 'com.apple.application-bundle'" -onlyin /System/Applications -onlyin /Applications)
 
 # Loop through each application path
 while IFS= read -r app_path; do

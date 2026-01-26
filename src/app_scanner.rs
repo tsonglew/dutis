@@ -14,7 +14,7 @@ impl AppScanner {
 
         // Use mdfind command to find applications, following the logic of the original script
         let output = Command::new("mdfind")
-            .arg("kMDItemKind == 'Application'")
+            .arg("kMDItemContentType == 'com.apple.application-bundle'")
             .arg("-onlyin")
             .arg("/System/Applications")
             .arg("-onlyin")
