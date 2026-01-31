@@ -67,6 +67,4 @@ impl PlistParser {
         result.sort();
         Ok(result)
     }
-
-
 }

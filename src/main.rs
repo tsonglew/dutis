@@ -38,7 +38,7 @@ fn main() -> Result<()> {
     // Analyze file extensions supported by each application
     let mut app_extensions: HashMap<String, Vec<String>> = HashMap::new();
 
-    for app_path in apps {
+    for app_path in &apps {
         if let Some(app_name) = Path::new(&app_path).file_stem().and_then(|n| n.to_str()) {
             let info_plist_path = format!("{}/Contents/Info.plist", app_path);
 
@@ -50,11 +50,22 @@ fn main() -> Result<()> {
         }
     }
 
+    // Collect all app names for the "any app" feature
+    let all_app_names: Vec<String> = apps
+        .iter()
+        .filter_map(|app_path| {
+            Path::new(app_path)
+                .file_stem()
+                .and_then(|n| n.to_str())
+                .map(String::from)
+        })
+        .collect();
+
     // Display complete results
     // display_results(&app_extensions);
 
     // Interactive query functionality
-    interactive_query(&app_extensions);
+    interactive_query(&app_extensions, &all_app_names);
 
     Ok(())
 }
@@ -165,7 +176,7 @@ fn print_help() {
     println!("For more information, visit: https://github.com/tsonglew/dutis");
 }
 
-fn interactive_query(app_extensions: &HashMap<String, Vec<String>>) {
+fn interactive_query(app_extensions: &HashMap<String, Vec<String>>, all_app_names: &[String]) {
     println!("\n🎯 Interactive Query Mode");
     println!("Enter file extension (e.g., py, js, txt) to find supporting applications");
     println!("Enter 'quit' or 'exit' to exit the program");
@@ -251,6 +262,19 @@ fn interactive_query(app_extensions: &HashMap<String, Vec<String>>) {
                             );
                         }
                     }
+
+                    // Offer to show all apps
+                    println!("\n💡 Want to set ANY application as default? Enter 'all' to browse all applications");
+                    print!("Or press Enter to try another extension: ");
+                    io::stdout().flush().unwrap();
+
+                    let mut all_choice = String::new();
+                    io::stdin().read_line(&mut all_choice).unwrap();
+                    let all_choice = all_choice.trim().to_lowercase();
+
+                    if all_choice == "all" {
+                        show_all_apps_menu(&ext, all_app_names);
+                    }
                 } else {
                     println!(
                         "✅ Found {} applications that support {} file type:",
@@ -265,6 +289,7 @@ fn interactive_query(app_extensions: &HashMap<String, Vec<String>>) {
                     // Ask user if they want to set default application
                     println!("\n🎯 Do you want to set a default application?");
                     println!("Enter application number to set as default, or press Enter to skip");
+                    println!("Enter 'all' to browse ALL applications (not just supporting ones)");
                     print!("Please choose (1-{}): ", supporting_apps.len());
                     io::stdout().flush().unwrap();
 
@@ -273,7 +298,9 @@ fn interactive_query(app_extensions: &HashMap<String, Vec<String>>) {
                     let choice = choice.trim();
 
                     if !choice.is_empty() {
-                        if let Ok(app_index) = choice.parse::<usize>() {
+                        if choice.to_lowercase() == "all" {
+                            show_all_apps_menu(&ext, all_app_names);
+                        } else if let Ok(app_index) = choice.parse::<usize>() {
                             if app_index >= 1 && app_index <= supporting_apps.len() {
                                 let selected_app = &supporting_apps[app_index - 1];
                                 if let Err(e) = set_default_app_for_extension(&ext, selected_app) {
@@ -656,4 +683,84 @@ fn set_default_app_without_duti(app_path: &str, extension: &str) -> Result<()> {
     println!("   • Restarting the system");
 
     Ok(())
+}
+
+/// Show all applications menu for selection
+fn show_all_apps_menu(extension: &str, all_app_names: &[String]) {
+    const PAGE_SIZE: usize = 20;
+    let mut page = 0;
+    let total_pages = (all_app_names.len() + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    loop {
+        println!("\n📋 All Applications - Page {}/{}", page + 1, total_pages);
+        println!("Setting default for {} files\n", extension.yellow());
+
+        let start = page * PAGE_SIZE;
+        let end = std::cmp::min(start + PAGE_SIZE, all_app_names.len());
+
+        for (i, app_name) in all_app_names[start..end].iter().enumerate() {
+            println!("   {}. {}", start + i + 1, app_name.bright_blue());
+        }
+
+        println!("\nOptions:");
+        println!(
+            "   • Enter number (1-{}) to select application",
+            all_app_names.len()
+        );
+        if page > 0 {
+            println!("   • 'p' or 'prev' for previous page");
+        }
+        if page < total_pages - 1 {
+            println!("   • 'n' or 'next' for next page");
+        }
+        println!("   • 'q' to return to main menu");
+        print!("\nYour choice: ");
+        io::stdout().flush().unwrap();
+
+        let mut choice = String::new();
+        io::stdin().read_line(&mut choice).unwrap();
+        let choice = choice.trim().to_lowercase();
+
+        match choice.as_str() {
+            "q" => break,
+            "n" | "next" => {
+                if page < total_pages - 1 {
+                    page += 1;
+                } else {
+                    println!("❌ Already on the last page");
+                }
+            }
+            "p" | "prev" => {
+                if page > 0 {
+                    page -= 1;
+                } else {
+                    println!("❌ Already on the first page");
+                }
+            }
+            _ => {
+                if let Ok(app_index) = choice.parse::<usize>() {
+                    if app_index >= 1 && app_index <= all_app_names.len() {
+                        let selected_app = &all_app_names[app_index - 1];
+                        if let Err(e) = set_default_app_for_extension(extension, selected_app) {
+                            println!("❌ Failed to set default application: {}", e);
+                        } else {
+                            println!(
+                                "\n✅ Successfully set {} as the default application for {} files!",
+                                selected_app.bright_green(),
+                                extension.yellow()
+                            );
+                        }
+                        break;
+                    } else {
+                        println!(
+                            "❌ Invalid choice, please enter a number between 1-{}",
+                            all_app_names.len()
+                        );
+                    }
+                } else {
+                    println!("❌ Invalid input");
+                }
+            }
+        }
+    }
 }
