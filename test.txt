@@ -1,139 +1,49 @@
-len:0
-len:0
-len:153
-len:30
-len:0
-len:0
-len:0
-len:0
-len:0
-len:1
-len:0
-len:0
-len:0
-len:0
-len:69
-len:1
-len:8
-len:0
-len:0
-len:286
-len:0
-len:0
-len:1
-len:0
-len:2
-len:0
-len:41
-len:0
-len:30
-len:15
-len:0
-len:0
-len:38
-len:0
-len:0
-len:0
-len:1
-len:0
-len:0
-len:0
-len:0
-len:0
-len:0
-len:0
-len:1
-len:1
-len:0
-len:35
-len:0
-len:0
-len:0
-len:0
-len:0
-len:153
-len:14
-len:0
-len:0
-len:153
-len:0
-len:0
-len:0
-len:2
-len:0
-len:0
-len:28
-len:23
-len:13
-len:0
-len:2
-len:0
-len:0
-len:12
-len:2
-len:49
-len:0
-len:1
-len:0
-len:5
-len:0
-len:0
-len:4
-len:2
-len:0
-len:6
-len:0
-len:0
-len:0
-len:7
-len:0
-len:0
-len:0
-len:0
-len:0
-len:0
-len:0
-len:0
-len:0
-len:0
-len:2
-len:0
-len:0
-len:0
-len:0
-len:14
-len:0
-len:0
-len:0
-len:0
-len:2
-len:0
-len:0
-len:0
-len:5
-len:4
-len:0
-len:0
-len:1
-len:0
-len:1
-len:0
-len:1
-len:0
-len:30
-len:4
-len:0
-len:0
-len:1
-len:1
-len:0
-len:0
-len:2
-len:0
-len:10
-len:4
-len:0
-len:0
-len:0
-len:0
-len:0
+Antigravity: 153
+BaiduNetdisk: 30
+Dropover: 1
+IINA: 69
+Image2Icon: 1
+IntelliJ IDEA: 8
+Keka: 286
+LocalSend: 1
+Menuwhere: 2
+Microsoft Excel: 41
+Microsoft Outlook: 30
+Microsoft PowerPoint: 15
+Microsoft Word: 38
+One Markdown: 1
+Quark: 1
+Raycast: 1
+Safari: 35
+Trae: 153
+Typora: 14
+Visual Studio Code: 153
+Xcode: 2
+Zed: 28
+Zen: 23
+Zotero: 13
+draw.io: 2
+iTerm: 12
+ima.copilot: 2
+wpsoffice: 49
+App Store: 1
+Automator: 5
+Calendar: 4
+Chess: 2
+Contacts: 6
+Font Book: 7
+Music: 2
+Photos: 14
+Shortcuts: 2
+System Settings: 5
+TV: 4
+Tips: 1
+AirPort Utility: 1
+Bluetooth File Exchange: 1
+ColorSync Utility: 30
+Console: 4
+Grapher: 1
+Magnifier: 1
+Screen Sharing: 2
+Script Editor: 10
+System Information: 4
