@@ -48,6 +48,7 @@ impl PlistParser {
         // Convert to vector and sort
         let mut result: Vec<String> = extensions.into_iter().collect();
         result.sort();
+        println!("len:{}", result.len());
         Ok(result)
     }
 }
