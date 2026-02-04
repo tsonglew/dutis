@@ -38,13 +38,11 @@ jobs:
         run: |
           cargo build --release --target x86_64-apple-darwin
           
-      - name: Create release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
           body: |
             ## What's Changed
             
@@ -75,15 +73,7 @@ jobs:
             dutis                    # Start interactive mode
             dutis --help            # Show help
             ```
+          files: ./target/x86_64-apple-darwin/release/dutis
+          overwrite_files: true
           draft: false
           prerelease: false
-          
-      - name: Upload binary asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./target/x86_64-apple-darwin/release/dutis
-          asset_name: dutis-macos-x86_64
-          asset_content_type: application/octet-stream
