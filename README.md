@@ -97,6 +97,16 @@ The application starts in interactive mode where you can:
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+## Community
+
+### Stargazers
+
+[![Stargazers over time](https://starchart.cc/tsonglew/dutis.svg)](https://starchart.cc/tsonglew/dutis)
+
+### Contributors
+
+[![Contributors](https://contrib.rocks/image?repo=tsonglew/dutis)](https://github.com/tsonglew/dutis/graphs/contributors)
+
 ## License
 
 This project is licensed under the MIT License.
