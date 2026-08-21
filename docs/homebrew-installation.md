@@ -3,15 +3,15 @@
 ## Quick Install
 
 ```bash
-brew install tsonglew/dutis/dutis
+brew install tsonglew/tap/dutis
 ```
 
 ## What This Does
 
 When you install `dutis` via Homebrew:
 
-1. **Automatic Dependencies**: Homebrew automatically installs Rust and other required dependencies
-2. **Binary Installation**: Downloads and installs the pre-compiled binary for your macOS version
+1. **Automatic Dependencies**: Homebrew installs the required `duti` runtime dependency
+2. **Binary Installation**: Downloads and installs a universal binary for Intel and Apple Silicon Macs
 3. **Path Setup**: Adds `dutis` to your system PATH
 4. **Updates**: Easy updates with `brew upgrade dutis`
 
@@ -21,7 +21,7 @@ If you prefer to add the tap first:
 
 ```bash
 # Add the tap
-brew tap tsonglew/dutis
+brew tap tsonglew/tap
 
 # Install dutis
 brew install dutis
@@ -56,7 +56,7 @@ brew uninstall dutis
 2. Try installing directly:
 
    ```bash
-   brew install tsonglew/dutis/dutis
+   brew install tsonglew/tap/dutis
    ```
 
 ### If you get permission errors

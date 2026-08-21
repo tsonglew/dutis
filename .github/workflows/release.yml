@@ -3,77 +3,183 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag, for example v2.4.0
+        required: true
+        type: string
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
-  build-and-release:
-    runs-on: macos-latest
-    
+  validate:
+    name: Validate release
+    runs-on: macos-14
     steps:
-      - name: Checkout code
+      - name: Checkout release tag
         uses: actions/checkout@v4
-        
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-apple-darwin
-          
-      - name: Install target
-        run: rustup target add x86_64-apple-darwin
-          
-      - name: Cache dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          
-      - name: Build release binary
+          components: clippy,rustfmt
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Verify tag matches Cargo version
         run: |
-          cargo build --release --target x86_64-apple-darwin
-          
+          package_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          if [[ "${RELEASE_TAG}" != "v${package_version}" ]]; then
+            echo "Tag ${RELEASE_TAG} does not match Cargo version ${package_version}" >&2
+            exit 1
+          fi
+
+      - name: Run quality checks
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --all-targets --locked
+
+  build:
+    name: Build universal macOS binary
+    needs: validate
+    runs-on: macos-14
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build both architectures
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+
+      - name: Package universal binary
+        run: |
+          archive="dutis-${RELEASE_TAG}-macos-universal.tar.gz"
+          mkdir -p dist/package
+          lipo -create \
+            target/aarch64-apple-darwin/release/dutis \
+            target/x86_64-apple-darwin/release/dutis \
+            -output dist/package/dutis
+          chmod +x dist/package/dutis
+          lipo -info dist/package/dutis
+          tar -C dist/package -czf "dist/${archive}" dutis
+          cd dist
+          shasum -a 256 "${archive}" > "${archive}.sha256"
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Verify archive checksum
+        working-directory: dist
+        run: sha256sum --check *.sha256
+
       - name: Create or update release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: Release ${{ github.ref_name }}
-          body: |
-            ## What's Changed
-            
-            This release includes:
-            - Automatic duti installation via Homebrew
-            - Improved default app setting with fallback methods
-            - Enhanced UTI detection with retry mechanisms
-            - English localization
-            - Better error handling and user feedback
-            
-            ## Installation
-            
-            ### Via Homebrew (Recommended)
-            ```bash
-            brew install tsonglew/dutis/dutis
-            ```
-            
-            ### From Source
-            ```bash
-            git clone https://github.com/tsonglew/dutis.git
-            cd dutis
-            cargo install --path .
-            ```
-            
-            ## Usage
-            
-            ```bash
-            dutis                    # Start interactive mode
-            dutis --help            # Show help
-            ```
-          files: ./target/x86_64-apple-darwin/release/dutis
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Dutis ${{ env.RELEASE_TAG }}
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/*.sha256
           overwrite_files: true
           draft: false
           prerelease: false
+
+  homebrew:
+    name: Update Homebrew tap
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require tap token
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [[ -z "${TAP_TOKEN}" ]]; then
+            echo "Configure the HOMEBREW_TAP_TOKEN repository secret." >&2
+            exit 1
+          fi
+
+      - name: Checkout release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          path: source
+
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: tsonglew/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Update formula
+        run: |
+          version="${RELEASE_TAG#v}"
+          archive="dutis-${RELEASE_TAG}-macos-universal.tar.gz"
+          sha256="$(sha256sum "dist/${archive}" | awk '{print $1}')"
+          url="https://github.com/tsonglew/dutis/releases/download/${RELEASE_TAG}/${archive}"
+          ruby source/scripts/render_homebrew_formula.rb \
+            "${version}" "${sha256}" "${url}" tap/Formula/dutis.rb
+
+      - name: Commit and push formula
+        working-directory: tap
+        run: |
+          if git diff --quiet -- Formula/dutis.rb; then
+            echo "Formula is already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/dutis.rb
+          git commit -m "Update dutis to ${RELEASE_TAG}"
+          git push

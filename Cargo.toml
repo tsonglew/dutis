@@ -1,7 +1,8 @@
 [package]
 name = "dutis"
-version = "0.1.0"
+version = "2.4.0"
 edition = "2021"
+rust-version = "1.88"
 description = "A comprehensive macOS application File Extension Manager and default app setter written in Rust"
 authors = ["Tsong Lew <tsonglew@gmail.com>"]
 license = "MIT"
@@ -14,12 +15,8 @@ name = "dutis"
 path = "src/main.rs"
 
 [dependencies]
-# Error handling
 anyhow = "1.0"
-thiserror = "1.0"
-
-# System operations
-walkdir = "2.4"
+plist = "1.10"
 
 # Terminal output formatting
 colored = "2.0"

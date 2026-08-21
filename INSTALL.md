@@ -5,10 +5,10 @@
 ### Via Homebrew
 
 ```bash
-brew install tsonglew/dutis/dutis
+brew install tsonglew/tap/dutis
 ```
 
-That's it! The application will automatically install the required `duti` dependency if needed.
+The formula installs the universal `dutis` binary and its `duti` dependency.
 
 ## Alternative Installation Methods
 
@@ -29,8 +29,8 @@ That's it! The application will automatically install the required `duti` depend
 #### Prerequisites
 
 - macOS 10.14 or later
-- Rust 1.70 or later
-- Homebrew (for automatic duti installation)
+- Rust 1.88 or later
+- `duti` when changing default applications
 
 #### Build Steps
 
@@ -65,10 +65,10 @@ dutis
 
 The application will:
 
-1. Check if `duti` is available
-2. Automatically install `duti` via Homebrew if needed
-3. Start scanning your system applications
-4. Enter interactive mode
+1. Scan your system applications
+2. Read their declared filename extensions
+3. Enter interactive mode
+4. Check for `duti` only when you choose to change a default
 
 ## Updating
 
@@ -105,19 +105,11 @@ cargo uninstall dutis
 
 ### "duti not found" Error
 
-The application should automatically install `duti` via Homebrew. If this fails:
+Install `duti` with Homebrew:
 
-1. Ensure Homebrew is installed:
-
-   ```bash
-   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-   ```
-
-2. Manually install duti:
-
-   ```bash
-   brew install duti
-   ```
+```bash
+brew install duti
+```
 
 ### Permission Issues
 
@@ -157,7 +149,7 @@ If Rust is not installed:
 - **Architecture**: Intel (x86_64) or Apple Silicon (arm64)
 - **Memory**: 512MB RAM minimum
 - **Storage**: 50MB free space
-- **Dependencies**: Homebrew (for automatic duti installation)
+- **Dependencies**: `duti` is required only for changing default applications
 
 ## Support
 
