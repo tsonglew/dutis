@@ -7,6 +7,7 @@ description = "A comprehensive macOS application File Extension Manager and defa
 authors = ["Tsong Lew <tsonglew@gmail.com>"]
 license = "MIT"
 repository = "https://github.com/tsonglew/dutis"
+homepage = "https://tsonglew.github.io/dutis/"
 keywords = ["macos", "file-extensions", "applications", "uti", "default-apps"]
 categories = ["command-line-utilities", "system"]
 
