@@ -2,6 +2,7 @@
 
 A comprehensive Rust application for viewing file extensions supported by macOS applications and setting default applications for file types.
 
+[![CI](https://github.com/tsonglew/dutis/actions/workflows/ci.yml/badge.svg)](https://github.com/tsonglew/dutis/actions/workflows/ci.yml)
 [![Release](https://github.com/tsonglew/dutis/actions/workflows/release.yml/badge.svg)](https://github.com/tsonglew/dutis/actions/workflows/release.yml)
 
 ## Features
@@ -10,27 +11,32 @@ A comprehensive Rust application for viewing file extensions supported by macOS 
 - 📱 **File Extension Analysis**: Shows which file extensions each application supports
 - 🎯 **Interactive Query Mode**: Search for applications that support specific file types
 - ⚙️ **Default App Setting**: Set default applications for file types using the `duti` command
-- 🚀 **UTI Detection**: Intelligent UTI (Uniform Type Identifier) detection with retry mechanisms
-- 📊 **Categorized Display**: File extensions are organized by category
-- 🔧 **Auto-dependency Management**: Automatically installs `duti` via Homebrew if not available
+- 🧭 **Accurate App Selection**: Preserves full application paths, including nested and duplicate names
+- 🧩 **Modern Metadata Support**: Reads legacy document types and modern UTI declarations
+- ✅ **Verified Updates**: Verifies the selected default application after applying it
 
 ## Installation
 
 ### Prerequisites
 
 - macOS 10.14 or later
-- Homebrew (for automatic duti installation)
+- `duti` (`brew install duti`) when changing default applications; the Homebrew formula installs it automatically
 
 ### Via Homebrew (Recommended)
 
 ```bash
-# Install dutis directly from Homebrew
-brew install tsonglew/dutis/dutis
+brew install tsonglew/tap/dutis
 ```
 
-### Automatic duti Installation
+The tap installs a prebuilt universal binary for both Apple Silicon and Intel Macs, together with the `duti` runtime dependency.
 
-The application will automatically check for `duti` on startup and install it via Homebrew if it's not available. No manual installation is required!
+### Install duti
+
+Browsing applications does not require `duti`. To change a default application, install it with:
+
+```bash
+brew install duti
+```
 
 ### Manual Installation
 
@@ -69,29 +75,31 @@ The application starts in interactive mode where you can:
 
 1. **System Directories**: Scans `/Applications`, `/System/Applications`, and `~/Applications`
 2. **Info.plist Parsing**: Reads each application's `Info.plist` file to extract supported file extensions
-3. **UTI Mapping**: Maps file extensions to their corresponding UTI (Uniform Type Identifier)
+3. **Modern Metadata**: Reads exported and imported UTI declarations as well as legacy document types
 
 ### Default App Setting
 
-1. **Bundle ID Detection**: Uses `mdls` command to get the application's Bundle Identifier
-2. **UTI Detection**: Creates temporary files with appropriate content to detect UTI
-3. **Retry Mechanism**: Implements intelligent retry logic for UTI detection
-4. **duti Integration**: Uses the `duti` command to set system-wide default applications
+1. **Bundle ID Detection**: Reads the selected application's bundle identifier
+2. **duti Integration**: Sets the handler directly by filename extension
+3. **Verification**: Reads the resulting association back before reporting success
 
 ## Technical Details
 
 ### Architecture
 
-- **Modular Design**: Separated into logical modules (`app_scanner`, `plist_parser`, `platform`)
-- **Cross-Platform Ready**: Platform-specific implementations with trait abstractions
+- **Modular Design**: Separates application scanning and plist parsing from the interactive flow
+- **macOS Native**: Works with application bundles and Launch Services through `duti`
 - **Error Handling**: Comprehensive error handling using `anyhow`
-- **Async Ready**: Designed to be easily extended with async operations
 
 ### Dependencies
 
 - **anyhow**: Error handling and propagation
 - **colored**: Terminal output formatting and colors
-- **walkdir**: Directory traversal
+- **plist**: Native XML and binary plist parsing
+
+## Releases
+
+Version tags are validated and published automatically. Each release contains a universal macOS binary and checksum, then updates the `tsonglew/homebrew-tap` repository. Maintainer setup and release instructions are documented in [docs/releasing.md](docs/releasing.md).
 
 ## Contributing
 

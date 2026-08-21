@@ -1,6 +1,7 @@
-use anyhow::Result;
-use std::collections::HashSet;
-use std::process::Command;
+use anyhow::{Context, Result};
+use plist::{Dictionary, Value};
+use std::collections::BTreeSet;
+use std::path::Path;
 
 pub struct PlistParser;
 
@@ -9,45 +10,129 @@ impl PlistParser {
         Self
     }
 
-    /// Parse the Info.plist file of an application to extract supported file extensions
-    pub fn parse_extensions(&self, plist_path: &str) -> Result<Vec<String>> {
-        let mut extensions = HashSet::new();
+    pub fn parse_extensions(&self, plist_path: &Path) -> Result<Vec<String>> {
+        let plist = Value::from_file(plist_path)
+            .with_context(|| format!("failed to parse {}", plist_path.display()))?;
+        Ok(extract_extensions(&plist))
+    }
+}
 
-        // Check if file exists
-        if !std::path::Path::new(plist_path).exists() {
-            return Ok(vec![]);
+fn extract_extensions(plist: &Value) -> Vec<String> {
+    let mut extensions = BTreeSet::new();
+    let Some(root) = plist.as_dictionary() else {
+        return Vec::new();
+    };
+
+    collect_document_type_extensions(root, &mut extensions);
+    collect_type_declaration_extensions(root, "UTExportedTypeDeclarations", &mut extensions);
+    collect_type_declaration_extensions(root, "UTImportedTypeDeclarations", &mut extensions);
+    extensions.into_iter().collect()
+}
+
+fn collect_document_type_extensions(root: &Dictionary, extensions: &mut BTreeSet<String>) {
+    let Some(document_types) = root.get("CFBundleDocumentTypes").and_then(Value::as_array) else {
+        return;
+    };
+
+    for document_type in document_types.iter().filter_map(Value::as_dictionary) {
+        if let Some(values) = document_type.get("CFBundleTypeExtensions") {
+            collect_string_values(values, extensions);
         }
+    }
+}
 
-        // Use PlistBuddy command to get document type count
-        let count_output = Command::new("/usr/libexec/PlistBuddy")
-            .arg("-c")
-            .arg("Print :CFBundleDocumentTypes")
-            .arg(plist_path)
-            .output();
+fn collect_type_declaration_extensions(
+    root: &Dictionary,
+    key: &str,
+    extensions: &mut BTreeSet<String>,
+) {
+    let Some(declarations) = root.get(key).and_then(Value::as_array) else {
+        return;
+    };
 
-        if let Ok(output) = count_output {
-            let content = String::from_utf8_lossy(&output.stdout);
+    for declaration in declarations.iter().filter_map(Value::as_dictionary) {
+        let Some(tags) = declaration
+            .get("UTTypeTagSpecification")
+            .and_then(Value::as_dictionary)
+        else {
+            continue;
+        };
+        if let Some(values) = tags.get("public.filename-extension") {
+            collect_string_values(values, extensions);
+        }
+    }
+}
 
-            let mut is_collecting = false;
-            for line in content.lines() {
-                let line = line.trim();
-                if line == "}" && is_collecting {
-                    is_collecting = false;
-                    continue;
-                }
-                if is_collecting && line != "" {
-                    extensions.insert(line.to_string());
-                    continue;
-                }
-                if line == "CFBundleTypeExtensions = Array {" {
-                    is_collecting = true;
-                }
+fn collect_string_values(value: &Value, extensions: &mut BTreeSet<String>) {
+    match value {
+        Value::String(value) => insert_extension(value, extensions),
+        Value::Array(values) => {
+            for value in values.iter().filter_map(Value::as_string) {
+                insert_extension(value, extensions);
             }
         }
+        _ => {}
+    }
+}
 
-        // Convert to vector and sort
-        let mut result: Vec<String> = extensions.into_iter().collect();
-        result.sort();
-        Ok(result)
+fn insert_extension(value: &str, extensions: &mut BTreeSet<String>) {
+    let extension = value.trim().trim_start_matches('.').to_ascii_lowercase();
+    if !extension.is_empty() && extension != "*" {
+        extensions.insert(extension);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dictionary(entries: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
+        Value::Dictionary(
+            entries
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn extracts_legacy_and_modern_extension_declarations() {
+        let plist = dictionary([
+            (
+                "CFBundleDocumentTypes",
+                Value::Array(vec![dictionary([(
+                    "CFBundleTypeExtensions",
+                    Value::Array(vec![Value::String("TXT".into()), Value::String("*".into())]),
+                )])]),
+            ),
+            (
+                "UTExportedTypeDeclarations",
+                Value::Array(vec![dictionary([(
+                    "UTTypeTagSpecification",
+                    dictionary([(
+                        "public.filename-extension",
+                        Value::Array(vec![
+                            Value::String(".md".into()),
+                            Value::String("txt".into()),
+                        ]),
+                    )]),
+                )])]),
+            ),
+        ]);
+
+        assert_eq!(extract_extensions(&plist), vec!["md", "txt"]);
+    }
+
+    #[test]
+    fn accepts_a_single_extension_string() {
+        let plist = dictionary([(
+            "CFBundleDocumentTypes",
+            Value::Array(vec![dictionary([(
+                "CFBundleTypeExtensions",
+                Value::String("json".into()),
+            )])]),
+        )]);
+
+        assert_eq!(extract_extensions(&plist), vec!["json"]);
     }
 }
