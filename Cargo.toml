@@ -19,4 +19,4 @@ anyhow = "1.0"
 plist = "1.10"
 
 # Terminal output formatting
-colored = "2.0"
+colored = "3.1"
