@@ -2,6 +2,8 @@
 
 A comprehensive Rust application for viewing file extensions supported by macOS applications and setting default applications for file types.
 
+**Website:** [tsonglew.github.io/dutis](https://tsonglew.github.io/dutis/)
+
 [![CI](https://github.com/tsonglew/dutis/actions/workflows/ci.yml/badge.svg)](https://github.com/tsonglew/dutis/actions/workflows/ci.yml)
 [![Release](https://github.com/tsonglew/dutis/actions/workflows/release.yml/badge.svg)](https://github.com/tsonglew/dutis/actions/workflows/release.yml)
 

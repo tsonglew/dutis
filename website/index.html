@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Dutis is a fast, open-source macOS utility for discovering file associations and changing default applications from the terminal."
+    />
+    <meta name="theme-color" content="#f3f0e7" />
+    <meta property="og:title" content="Dutis — Every extension. Your decision." />
+    <meta
+      property="og:description"
+      content="Inspect and control macOS file associations without digging through Finder."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://tsonglew.github.io/dutis/" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=Instrument+Sans:wdth,wght@75..100,400..700&amp;display=swap"
+      rel="stylesheet"
+    />
+    <script>document.documentElement.classList.add("js");</script>
+    <link rel="stylesheet" href="styles.css" />
+    <title>Dutis — macOS file associations, under control</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="grain" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="Dutis home">
+        <span class="brand-mark" aria-hidden="true">D</span>
+        <span>DUTIS</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="#features">Features</a>
+        <a href="#how-it-works">How it works</a>
+        <a href="#install">Install</a>
+      </nav>
+      <a class="github-link" href="https://github.com/tsonglew/dutis">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 .7a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2.23c-3.23.7-3.91-1.37-3.91-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.58-.3-5.29-1.29-5.29-5.69 0-1.26.45-2.28 1.2-3.09-.12-.3-.52-1.47.11-3.05 0 0 .97-.31 3.16 1.18a10.94 10.94 0 0 1 5.76 0c2.19-1.49 3.16-1.18 3.16-1.18.63 1.58.23 2.76.11 3.05.75.81 1.2 1.83 1.2 3.09 0 4.42-2.72 5.39-5.3 5.68.42.36.79 1.07.79 2.16v3.2c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z" />
+        </svg>
+        <span>GitHub</span>
+      </a>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="hero-copy">
+          <p class="eyebrow reveal">FILE ASSOCIATION, WITHOUT THE HUNT</p>
+          <h1 class="reveal delay-1">
+            Every extension.<br />
+            <em>Your decision.</em>
+          </h1>
+          <p class="hero-lede reveal delay-2">
+            Dutis shows which apps handle your files, then changes the default with one deliberate choice. No Finder archaeology. No mystery menus.
+          </p>
+          <div class="hero-actions reveal delay-3">
+            <a class="button button-primary" href="#install">Install with Homebrew</a>
+            <a class="text-link" href="https://github.com/tsonglew/dutis">
+              Read the source <span aria-hidden="true">↗</span>
+            </a>
+          </div>
+          <dl class="hero-facts reveal delay-4">
+            <div><dt>Built in</dt><dd>Rust</dd></div>
+            <div><dt>Runs on</dt><dd>macOS</dd></div>
+            <div><dt>License</dt><dd>MIT</dd></div>
+          </dl>
+        </div>
+
+        <div class="switchboard reveal delay-2" aria-label="Interactive Dutis demonstration">
+          <div class="window-bar">
+            <div class="traffic-lights" aria-hidden="true"><i></i><i></i><i></i></div>
+            <span>dutis — association console</span>
+            <span class="live-dot">LIVE</span>
+          </div>
+          <div class="terminal-line">
+            <span class="prompt">›</span>
+            <span>Scanning system applications…</span>
+            <strong>124 FOUND</strong>
+          </div>
+          <div class="extension-tabs" role="tablist" aria-label="Choose a file extension">
+            <button class="extension-tab active" role="tab" aria-selected="true" data-extension="md">.md</button>
+            <button class="extension-tab" role="tab" aria-selected="false" data-extension="pdf">.pdf</button>
+            <button class="extension-tab" role="tab" aria-selected="false" data-extension="html">.html</button>
+            <button class="extension-tab" role="tab" aria-selected="false" data-extension="png">.png</button>
+          </div>
+          <div class="association-card" aria-live="polite">
+            <div class="file-token" id="file-token">MD</div>
+            <div class="association-copy">
+              <span class="overline">DEFAULT APPLICATION</span>
+              <strong id="demo-app">Visual Studio Code</strong>
+              <code id="demo-bundle">com.microsoft.VSCode</code>
+            </div>
+            <span class="verified">✓ VERIFIED</span>
+          </div>
+          <div class="terminal-output" aria-hidden="true">
+            <span><b>01</b> Read bundle metadata</span>
+            <span><b>02</b> Apply handler with duti</span>
+            <span><b>03</b> Read association back</span>
+          </div>
+          <button class="demo-button" id="demo-button" type="button">
+            Simulate change <span aria-hidden="true">→</span>
+          </button>
+        </div>
+      </section>
+
+      <div class="signal-strip" aria-hidden="true">
+        <span>SCAN</span><i></i><span>INSPECT</span><i></i><span>SELECT</span><i></i><span>VERIFY</span><i></i><span>DONE</span>
+      </div>
+
+      <section class="manifesto section-pad reveal">
+        <p class="section-index">01 / WHY</p>
+        <div>
+          <h2>Stop doing<br /><span>Finder archaeology.</span></h2>
+          <p>
+            macOS knows which apps can open a file. It just makes that knowledge hard to inspect. Dutis reads application metadata directly and puts the answer in one focused terminal flow.
+          </p>
+        </div>
+      </section>
+
+      <section class="features section-pad" id="features">
+        <div class="section-heading reveal">
+          <p class="section-index">02 / CAPABILITIES</p>
+          <h2>Small utility.<br />Sharp edges.</h2>
+        </div>
+        <div class="feature-grid">
+          <article class="feature feature-wide reveal">
+            <span class="feature-number">01</span>
+            <div class="feature-visual scan-visual" aria-hidden="true">
+              <span>Applications</span>
+              <b>124</b>
+              <div class="scan-line"></div>
+            </div>
+            <h3>Find every application</h3>
+            <p>Scans system, shared, nested, and user application folders while preserving the exact bundle path.</p>
+          </article>
+          <article class="feature reveal">
+            <span class="feature-number">02</span>
+            <div class="extension-stack" aria-hidden="true"><i>.rs</i><i>.md</i><i>.pdf</i></div>
+            <h3>Read real metadata</h3>
+            <p>Understands legacy document types and modern imported or exported UTI declarations.</p>
+          </article>
+          <article class="feature feature-dark reveal">
+            <span class="feature-number">03</span>
+            <div class="check-orbit" aria-hidden="true"><span>✓</span></div>
+            <h3>Trust, then verify</h3>
+            <p>Every change is read back from Launch Services before Dutis reports success.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="workflow section-pad" id="how-it-works">
+        <div class="section-heading reveal">
+          <p class="section-index">03 / FLOW</p>
+          <h2>Three moves.<br />No guesswork.</h2>
+        </div>
+        <ol class="workflow-list">
+          <li class="reveal">
+            <span>01</span>
+            <h3>Type an extension</h3>
+            <p>Enter <code>md</code>, <code>pdf</code>, <code>html</code>, or any valid file extension.</p>
+          </li>
+          <li class="reveal">
+            <span>02</span>
+            <h3>Choose the app</h3>
+            <p>Pick from declared handlers or browse every application installed on your Mac.</p>
+          </li>
+          <li class="reveal">
+            <span>03</span>
+            <h3>Confirm the result</h3>
+            <p>Dutis applies the association and verifies the resulting bundle identifier.</p>
+          </li>
+        </ol>
+      </section>
+
+      <section class="install section-pad" id="install">
+        <div class="install-copy reveal">
+          <p class="section-index">04 / INSTALL</p>
+          <h2>One command.<br />Full control.</h2>
+          <p>Homebrew installs the universal binary and its <code>duti</code> dependency. Works on Apple Silicon and Intel Macs.</p>
+        </div>
+        <div class="command-panel reveal delay-1">
+          <div class="command-label"><span>TERMINAL</span><span>HOMEBREW</span></div>
+          <div class="command-row">
+            <code><span>$</span> brew install tsonglew/tap/dutis</code>
+            <button id="copy-command" type="button" data-command="brew install tsonglew/tap/dutis">
+              <span class="copy-label">Copy</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-3M5 8h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2Z" /></svg>
+            </button>
+          </div>
+          <div class="command-foot">
+            <span>Universal binary</span><span>Dependency-aware</span><span>Open source</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="open-source section-pad reveal">
+        <div class="asterisk" aria-hidden="true">✳</div>
+        <p>Built in the open.<br />Useful by design.</p>
+        <a href="https://github.com/tsonglew/dutis">Explore the repository <span aria-hidden="true">↗</span></a>
+      </section>
+    </main>
+
+    <footer>
+      <a class="brand" href="#top"><span class="brand-mark" aria-hidden="true">D</span><span>DUTIS</span></a>
+      <p>File associations, made legible.</p>
+      <p>© <span id="year">2026</span> Tsonglew · MIT License</p>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
