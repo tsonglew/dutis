@@ -12,19 +12,18 @@ formula = <<~RUBY
     desc "Manage default applications for file extensions on macOS"
     homepage "https://github.com/tsonglew/dutis"
     url "#{url}"
-    version "#{version}"
     sha256 "#{sha256}"
     license "MIT"
 
-    depends_on :macos
     depends_on "duti"
+    depends_on :macos
 
     def install
       bin.install "dutis"
     end
 
     test do
-      assert_match "Dutis - macOS", shell_output("\#{bin}/dutis --help")
+      assert_match version.to_s, shell_output("\#{bin}/dutis --version")
     end
   end
 RUBY
