@@ -1,0 +1,7 @@
+# Dutis declarative configuration schema v1.
+version = 1
+
+# Values may be an exact bundle ID, exact .app path, or unique application name.
+[associations]
+md = "com.apple.TextEdit"
+txt = "com.apple.TextEdit"

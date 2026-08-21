@@ -43,3 +43,21 @@ fn set_requires_confirmation_before_scanning_or_mutating() {
     assert_eq!(response["command"], "set");
     assert_eq!(response["error"]["kind"], "usage");
 }
+
+#[test]
+fn apply_requires_a_reviewed_digest_before_reading_configuration() {
+    let output = dutis()
+        .args(["apply", "missing.toml", "--yes", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stderr.is_empty());
+
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["command"], "apply");
+    assert_eq!(response["error"]["kind"], "usage");
+    assert!(response["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("--plan-digest"));
+}

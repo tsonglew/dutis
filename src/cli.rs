@@ -1,4 +1,5 @@
 use clap::{Args, Parser, Subcommand};
+use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -22,6 +23,12 @@ pub enum CliCommand {
     Get(ExtensionArgs),
     /// Set the default application for an extension
     Set(SetArgs),
+    /// Build a deterministic plan from a declarative configuration
+    Plan(ConfigArgs),
+    /// Show associations that differ from a declarative configuration
+    Diff(ConfigArgs),
+    /// Apply and verify a previously reviewed declarative plan
+    Apply(ApplyArgs),
     /// Check whether dutis and its runtime dependency are ready
     Doctor(OutputArgs),
 }
@@ -49,6 +56,33 @@ pub struct SetArgs {
     /// Exact bundle ID, application path, or unambiguous application name
     pub app_selector: String,
     /// Resolve and display the operation without changing the system
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Confirm a non-interactive system change
+    #[arg(long)]
+    pub yes: bool,
+    /// Emit stable machine-readable JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ConfigArgs {
+    /// Path to a versioned dutis TOML configuration
+    pub config: PathBuf,
+    /// Emit stable machine-readable JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ApplyArgs {
+    /// Path to a versioned dutis TOML configuration
+    pub config: PathBuf,
+    /// Digest returned by a freshly reviewed plan command
+    #[arg(long)]
+    pub plan_digest: Option<String>,
+    /// Rebuild and display the plan without changing the system
     #[arg(long)]
     pub dry_run: bool,
     /// Confirm a non-interactive system change
@@ -90,5 +124,35 @@ mod tests {
                 ..
             }))
         ));
+
+        let cli = Cli::try_parse_from([
+            "dutis",
+            "apply",
+            "dutis.toml",
+            "--plan-digest",
+            "abc123",
+            "--yes",
+            "--json",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(CliCommand::Apply(ApplyArgs {
+                dry_run: false,
+                yes: true,
+                json: true,
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn parses_apply_safety_options_for_structured_validation() {
+        assert!(Cli::try_parse_from(["dutis", "apply", "dutis.toml", "--yes"]).is_ok());
+        assert!(
+            Cli::try_parse_from(["dutis", "apply", "dutis.toml", "--plan-digest", "abc123"])
+                .is_ok()
+        );
+        assert!(Cli::try_parse_from(["dutis", "apply", "dutis.toml", "--dry-run"]).is_ok());
     }
 }
