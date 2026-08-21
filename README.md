@@ -16,6 +16,7 @@ A comprehensive Rust application for viewing file extensions supported by macOS 
 - 🧭 **Accurate App Selection**: Preserves full application paths, including nested and duplicate names
 - 🧩 **Modern Metadata Support**: Reads legacy document types and modern UTI declarations
 - ✅ **Verified Updates**: Verifies the selected default application after applying it
+- 🤖 **Agent-ready CLI**: Stable JSON output, dry runs, deterministic selectors, and explicit exit codes
 
 ## Installation
 
@@ -71,6 +72,39 @@ The application starts in interactive mode where you can:
 3. **Set Default Apps**: Choose an application to set as the default for a specific file type
 4. **Debug Information**: Access detailed scanning information
 
+### Command Line Mode
+
+Use explicit commands from shell scripts or AI agents. A leading dot on an
+extension is optional.
+
+```bash
+# Inspect installed applications and supported handlers
+dutis list
+dutis query md
+dutis get .md
+
+# Emit a versioned JSON response
+dutis query json --json
+
+# Preview a change without mutating the system
+dutis set md com.microsoft.VSCode --dry-run --json
+
+# Apply and verify a change; --yes is required for non-interactive writes
+dutis set md com.microsoft.VSCode --yes
+
+# Check local readiness
+dutis doctor --json
+```
+
+Applications can be selected by exact bundle ID, exact application path, or an
+unambiguous application name. JSON responses use API version `1`. Exit codes are
+`0` for success, `2` for usage errors, `3` for no match, `4` for ambiguous
+selectors, `5` for an unavailable dependency, and `6` for operation failure.
+
+The product and engineering sequence for declarative configuration, rollback,
+MCP, agent policies, profiles, and drift detection is documented in the
+[Agent Roadmap](docs/agent-roadmap.md).
+
 ## How It Works
 
 ### Application Scanning
@@ -98,6 +132,8 @@ The application starts in interactive mode where you can:
 - **anyhow**: Error handling and propagation
 - **colored**: Terminal output formatting and colors
 - **plist**: Native XML and binary plist parsing
+- **clap**: Command parsing and generated help
+- **serde / serde_json**: Versioned machine-readable output
 
 ## Releases
 
