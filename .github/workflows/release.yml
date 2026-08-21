@@ -2,6 +2,8 @@ name: Release
 
 on:
   push:
+    branches:
+      - master
     tags:
       - "v*"
   workflow_dispatch:
@@ -15,21 +17,74 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  group: release-${{ github.event.inputs.tag || github.ref }}
   cancel-in-progress: false
 
-env:
-  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-
 jobs:
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      release_sha: ${{ steps.release.outputs.release_sha }}
+      should_release: ${{ steps.release.outputs.should_release }}
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.sha }}
+
+      - name: Resolve release version
+        id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          PUSHED_REF_TYPE: ${{ github.ref_type }}
+          PUSHED_REF_NAME: ${{ github.ref_name }}
+        run: |
+          package_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          release_tag="v${package_version}"
+
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            if [[ "${INPUT_TAG}" != "${release_tag}" ]]; then
+              echo "Requested tag ${INPUT_TAG} does not match Cargo version ${package_version}." >&2
+              exit 1
+            fi
+            if ! git show-ref --tags --verify --quiet "refs/tags/${release_tag}"; then
+              echo "Tag ${release_tag} does not exist." >&2
+              exit 1
+            fi
+            should_release=true
+          elif [[ "${PUSHED_REF_TYPE}" == "tag" ]]; then
+            if [[ "${PUSHED_REF_NAME}" != "${release_tag}" ]]; then
+              echo "Tag ${PUSHED_REF_NAME} does not match Cargo version ${package_version}." >&2
+              exit 1
+            fi
+            should_release=true
+          elif git show-ref --tags --verify --quiet "refs/tags/${release_tag}"; then
+            echo "${release_tag} already exists; skipping release. Bump Cargo.toml to publish a new version."
+            should_release=false
+          else
+            should_release=true
+          fi
+
+          echo "release_tag=${release_tag}" >> "${GITHUB_OUTPUT}"
+          echo "release_sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+          echo "should_release=${should_release}" >> "${GITHUB_OUTPUT}"
+
   validate:
     name: Validate release
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: macos-14
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
     steps:
       - name: Checkout release tag
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ needs.prepare.outputs.release_sha }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -53,10 +108,46 @@ jobs:
           cargo clippy --all-targets --locked -- -D warnings
           cargo test --all-targets --locked
 
+  tag:
+    name: Create release tag
+    needs:
+      - prepare
+      - validate
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+    steps:
+      - name: Checkout validated commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_SHA }}
+
+      - name: Create tag after validation
+        if: github.event_name == 'push' && github.ref_type == 'branch'
+        run: |
+          if git show-ref --tags --verify --quiet "refs/tags/${RELEASE_TAG}"; then
+            echo "${RELEASE_TAG} was created by another run."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --annotate "${RELEASE_TAG}" "${RELEASE_SHA}" --message "Dutis ${RELEASE_TAG}"
+          git push origin "${RELEASE_TAG}"
+
   build:
     name: Build universal macOS binary
-    needs: validate
+    needs:
+      - prepare
+      - tag
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: macos-14
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
     steps:
       - name: Checkout release tag
         uses: actions/checkout@v4
@@ -101,8 +192,13 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    needs: build
+    needs:
+      - prepare
+      - build
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
     permissions:
       contents: write
     steps:
@@ -131,8 +227,13 @@ jobs:
 
   homebrew:
     name: Update Homebrew tap
-    needs: publish
+    needs:
+      - prepare
+      - publish
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
     steps:
       - name: Require tap token
         env:

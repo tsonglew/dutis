@@ -101,7 +101,7 @@ The application starts in interactive mode where you can:
 
 ## Releases
 
-Version tags are validated and published automatically. Each release contains a universal macOS binary and checksum, then updates the `tsonglew/homebrew-tap` repository. Maintainer setup and release instructions are documented in [docs/releasing.md](docs/releasing.md).
+After a version bump is merged into `master`, CI validates the commit, creates the matching version tag, publishes a universal macOS binary and checksum, then updates the `tsonglew/homebrew-tap` repository. Maintainer setup and release instructions are documented in [docs/releasing.md](docs/releasing.md).
 
 ## Contributing
 
