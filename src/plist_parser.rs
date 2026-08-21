@@ -5,15 +5,28 @@ use std::path::Path;
 
 pub struct PlistParser;
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct AppMetadata {
+    pub bundle_id: Option<String>,
+    pub extensions: Vec<String>,
+}
+
 impl PlistParser {
     pub fn new() -> Self {
         Self
     }
 
-    pub fn parse_extensions(&self, plist_path: &Path) -> Result<Vec<String>> {
+    pub fn parse_metadata(&self, plist_path: &Path) -> Result<AppMetadata> {
         let plist = Value::from_file(plist_path)
             .with_context(|| format!("failed to parse {}", plist_path.display()))?;
-        Ok(extract_extensions(&plist))
+        Ok(AppMetadata {
+            bundle_id: plist
+                .as_dictionary()
+                .and_then(|root| root.get("CFBundleIdentifier"))
+                .and_then(Value::as_string)
+                .map(str::to_owned),
+            extensions: extract_extensions(&plist),
+        })
     }
 }
 
@@ -134,5 +147,28 @@ mod tests {
         )]);
 
         assert_eq!(extract_extensions(&plist), vec!["json"]);
+    }
+
+    #[test]
+    fn extracts_bundle_identifier_with_extensions() {
+        let plist = dictionary([
+            (
+                "CFBundleIdentifier",
+                Value::String("com.example.Editor".into()),
+            ),
+            (
+                "CFBundleDocumentTypes",
+                Value::Array(vec![dictionary([(
+                    "CFBundleTypeExtensions",
+                    Value::String("txt".into()),
+                )])]),
+            ),
+        ]);
+        let root = plist.as_dictionary().unwrap();
+        assert_eq!(
+            root.get("CFBundleIdentifier").and_then(Value::as_string),
+            Some("com.example.Editor")
+        );
+        assert_eq!(extract_extensions(&plist), vec!["txt"]);
     }
 }
