@@ -139,6 +139,186 @@ fn unknown_profile_has_stable_json_error() {
 }
 
 #[test]
+fn watch_remediation_requires_explicit_approval_before_reading_config() {
+    let output = dutis()
+        .args([
+            "watch",
+            "missing.toml",
+            "--once",
+            "--remediate",
+            "--requester",
+            "test-agent",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["command"], "watch");
+    assert_eq!(response["error"]["kind"], "usage");
+    assert!(response["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("--yes"));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn watch_once_reports_drift_without_invoking_duti_set() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "dutis-watch-read-only-{}-{unique}",
+        std::process::id()
+    ));
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let duti = bin.join("duti");
+    fs::write(
+        &duti,
+        concat!(
+            "#!/bin/sh\n",
+            "printf '%s\\n' \"$*\" >> \"$DUTI_CALL_LOG\"\n",
+            "if [ \"$1\" = \"-V\" ]; then printf 'test-duti\\n'; exit 0; fi\n",
+            "if [ \"$1\" = \"-x\" ]; then printf 'Other\\n/Applications/Other.app\\ncom.example.Other\\n'; exit 0; fi\n",
+            "exit 99\n",
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&duti, fs::Permissions::from_mode(0o700)).unwrap();
+    let config = root.join("dutis.toml");
+    fs::write(
+        &config,
+        "version = 1\n[associations]\nmd = 'com.apple.TextEdit'\n",
+    )
+    .unwrap();
+    let calls = root.join("duti-calls.log");
+
+    let output = dutis()
+        .env("PATH", &bin)
+        .env("DUTI_CALL_LOG", &calls)
+        .env("DUTIS_STATE_DIR", root.join("state"))
+        .args(["watch", config.to_str().unwrap(), "--once", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["data"]["report"]["state"], "drift_detected");
+    assert!(response["data"]["remediation"].is_null());
+    let calls = fs::read_to_string(&calls).unwrap();
+    assert!(calls.lines().any(|line| line == "-V"));
+    assert!(calls.lines().any(|line| line == "-x md"));
+    assert!(!calls.lines().any(|line| line.starts_with("-s ")));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn opted_in_watch_remediation_uses_snapshot_audit_and_verification() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "dutis-watch-remediation-{}-{unique}",
+        std::process::id()
+    ));
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let duti = bin.join("duti");
+    fs::write(
+        &duti,
+        concat!(
+            "#!/bin/sh\n",
+            "printf '%s\\n' \"$*\" >> \"$DUTI_CALL_LOG\"\n",
+            "if [ \"$1\" = \"-V\" ]; then printf 'test-duti\\n'; exit 0; fi\n",
+            "if [ \"$1\" = \"-s\" ]; then : > \"$DUTI_FAKE_STATE\"; exit 0; fi\n",
+            "if [ \"$1\" = \"-x\" ] && [ -f \"$DUTI_FAKE_STATE\" ]; then printf 'TextEdit\\n/System/Applications/TextEdit.app\\ncom.apple.TextEdit\\n'; exit 0; fi\n",
+            "if [ \"$1\" = \"-x\" ]; then printf 'Other\\n/Applications/Other.app\\ncom.example.Other\\n'; exit 0; fi\n",
+            "exit 99\n",
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&duti, fs::Permissions::from_mode(0o700)).unwrap();
+    let config = root.join("dutis.toml");
+    fs::write(
+        &config,
+        "version = 1\n[associations]\nmd = 'com.apple.TextEdit'\n",
+    )
+    .unwrap();
+    let calls = root.join("duti-calls.log");
+    let fake_state = root.join("applied");
+    let state = root.join("state");
+
+    let output = dutis()
+        .env("PATH", &bin)
+        .env("DUTI_CALL_LOG", &calls)
+        .env("DUTI_FAKE_STATE", &fake_state)
+        .env("DUTIS_STATE_DIR", &state)
+        .args([
+            "watch",
+            config.to_str().unwrap(),
+            "--once",
+            "--remediate",
+            "--yes",
+            "--requester",
+            "integration-test",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["data"]["remediation"]["status"], "succeeded");
+    assert_eq!(response["data"]["remediation"]["mutation"]["applied"], 1);
+    assert!(response["data"]["remediation"]["mutation"]["safety_snapshot_id"].is_string());
+    assert!(response["data"]["remediation"]["mutation"]["audit_id"].is_string());
+    let calls = fs::read_to_string(&calls).unwrap();
+    assert!(calls
+        .lines()
+        .any(|line| line == "-s com.apple.TextEdit .md all"));
+    assert_eq!(fs::read_dir(state.join("snapshots")).unwrap().count(), 1);
+    assert_eq!(fs::read_dir(state.join("audit")).unwrap().count(), 1);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn launch_agent_status_is_read_only_for_an_isolated_directory() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "dutis-launch-agent-{}-{unique}",
+        std::process::id()
+    ));
+    let output = dutis()
+        .env("DUTIS_LAUNCH_AGENT_DIR", &directory)
+        .args(["launch-agent", "status", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["command"], "launch-agent");
+    assert_eq!(response["data"]["installed"], false);
+    assert_eq!(response["data"]["loaded"], false);
+}
+
+#[test]
 fn mcp_stdio_initializes_and_advertises_read_only_tools() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -185,6 +365,7 @@ fn mcp_stdio_initializes_and_advertises_read_only_tools() {
     assert!(tools.iter().any(|tool| tool["name"] == "dutis_policy"));
     assert!(tools.iter().any(|tool| tool["name"] == "dutis_profiles"));
     assert!(tools.iter().any(|tool| tool["name"] == "dutis_recommend"));
+    assert!(tools.iter().any(|tool| tool["name"] == "dutis_drift"));
     assert!(!tools.iter().any(|tool| tool["name"] == "dutis_apply"));
     assert_eq!(
         responses[3]["result"]["structuredContent"]["data"]["approval_mode"],

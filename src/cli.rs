@@ -43,6 +43,10 @@ pub enum CliCommand {
     Profile(ProfileArgs),
     /// Generate an explainable proposal from a built-in profile
     Recommend(RecommendArgs),
+    /// Detect and optionally remediate drift from a declarative configuration
+    Watch(WatchArgs),
+    /// Manage the optional per-user drift monitoring LaunchAgent
+    LaunchAgent(LaunchAgentArgs),
     /// Run the local Model Context Protocol server over stdio
     Mcp(McpArgs),
     /// Check whether dutis and its runtime dependency are ready
@@ -211,6 +215,73 @@ pub struct RecommendArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct WatchArgs {
+    /// Path to a versioned dutis TOML configuration
+    pub config: PathBuf,
+    /// Seconds between checks in continuous mode
+    #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(1..))]
+    pub interval_seconds: u64,
+    /// Check once and exit instead of monitoring continuously
+    #[arg(long)]
+    pub once: bool,
+    /// Send a macOS notification when drift changes or recovers
+    #[arg(long)]
+    pub notify: bool,
+    /// Automatically restore drift through policy, snapshot, audit, and verification
+    #[arg(long)]
+    pub remediate: bool,
+    /// Explicitly approve automatic remediation
+    #[arg(long)]
+    pub yes: bool,
+    /// Identity recorded for automatic remediation audit entries
+    #[arg(long)]
+    pub requester: Option<String>,
+    /// Emit one compact JSON object per check
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct LaunchAgentArgs {
+    #[command(subcommand)]
+    pub command: LaunchAgentCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LaunchAgentCommand {
+    /// Install or replace the per-user drift monitor
+    Install(LaunchAgentInstallArgs),
+    /// Remove the per-user drift monitor
+    Uninstall(OutputArgs),
+    /// Show whether the per-user drift monitor is installed and loaded
+    Status(OutputArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct LaunchAgentInstallArgs {
+    /// Path to a versioned dutis TOML configuration
+    pub config: PathBuf,
+    /// Seconds between scheduled checks (minimum 10)
+    #[arg(long, default_value_t = 300, value_parser = clap::value_parser!(u64).range(10..))]
+    pub interval_seconds: u64,
+    /// Send macOS notifications when drift is detected
+    #[arg(long)]
+    pub notify: bool,
+    /// Automatically restore drift through the governed mutation pipeline
+    #[arg(long)]
+    pub remediate: bool,
+    /// Explicitly approve scheduled automatic remediation
+    #[arg(long)]
+    pub yes: bool,
+    /// Identity recorded for automatic remediation audit entries
+    #[arg(long)]
+    pub requester: Option<String>,
+    /// Emit stable machine-readable JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
 pub struct McpArgs {
     /// Register mutation tools; also requires DUTIS_MCP_APPROVAL_TOKEN
     #[arg(long)]
@@ -332,5 +403,49 @@ mod tests {
         assert!(Cli::try_parse_from(["dutis", "profile", "list", "--json"]).is_ok());
         assert!(Cli::try_parse_from(["dutis", "profile", "show", "developer", "--json"]).is_ok());
         assert!(Cli::try_parse_from(["dutis", "recommend", "minimal", "--json"]).is_ok());
+    }
+
+    #[test]
+    fn parses_watch_and_launch_agent_commands() {
+        let cli = Cli::try_parse_from([
+            "dutis",
+            "watch",
+            "dutis.toml",
+            "--once",
+            "--notify",
+            "--json",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(CliCommand::Watch(WatchArgs {
+                once: true,
+                notify: true,
+                remediate: false,
+                json: true,
+                ..
+            }))
+        ));
+        assert!(Cli::try_parse_from([
+            "dutis",
+            "launch-agent",
+            "install",
+            "dutis.toml",
+            "--interval-seconds",
+            "300",
+            "--notify",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from(["dutis", "launch-agent", "status", "--json"]).is_ok());
+        assert!(Cli::try_parse_from(["dutis", "launch-agent", "uninstall", "--json"]).is_ok());
+        assert!(Cli::try_parse_from([
+            "dutis",
+            "launch-agent",
+            "install",
+            "dutis.toml",
+            "--interval-seconds",
+            "5",
+        ])
+        .is_err());
     }
 }

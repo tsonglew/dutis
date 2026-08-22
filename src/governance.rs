@@ -286,6 +286,7 @@ pub enum MutationChannel {
     Cli,
     Interactive,
     Mcp,
+    Watcher,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
@@ -294,6 +295,7 @@ pub enum MutationOperation {
     Set,
     Apply,
     Rollback,
+    Remediate,
 }
 
 #[derive(Debug, Clone)]

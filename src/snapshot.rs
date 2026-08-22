@@ -22,6 +22,7 @@ pub enum SnapshotReason {
     Manual,
     BeforeApply,
     BeforeRollback,
+    BeforeRemediation,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]

@@ -32,6 +32,7 @@ The server advertises these read tools:
 - `dutis_profiles`: list built-in profiles and ordered candidates.
 - `dutis_profile`: inspect one profile by its `profile` name.
 - `dutis_recommend`: generate an explainable proposal, plan digest, and policy assessment by `profile` name.
+- `dutis_drift`: check inline TOML for drift and return a timestamped report with policy assessment.
 - `dutis_query`: find installed handlers for one extension.
 - `dutis_get`: inspect the current default handler.
 - `dutis_diff`: parse inline versioned TOML and return a deterministic plan.
@@ -49,6 +50,10 @@ Profile recommendations are also read-only. A recommendation is evidence, not
 approval: it does not register a mutation tool call or change an association.
 To use one, review its `proposed_toml`, rebuild it with `dutis_diff`, run
 `dutis_policy_check`, and follow the normal write approval flow.
+
+`dutis_drift` accepts the same `config_toml` input as `dutis_diff`. It reports
+`in_sync`, `drift_detected`, or `unresolved` and never remediates. MCP clients
+must use the separately gated apply workflow for any change.
 
 ## Enable writes explicitly
 

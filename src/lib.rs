@@ -1,7 +1,9 @@
 pub mod app_scanner;
 pub mod application;
 pub mod config;
+pub mod drift;
 pub mod governance;
+pub mod launch_agent;
 pub mod mcp;
 pub mod planner;
 pub mod plist_parser;
