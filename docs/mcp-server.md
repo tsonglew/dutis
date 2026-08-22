@@ -124,3 +124,9 @@ Each tool call emits one JSON audit event to stderr:
 
 Audit events never include tool arguments or approval tokens. Snapshot storage
 continues to use `DUTIS_STATE_DIR` when set.
+
+Start the server with global `--event-log` or `--event-command` options, or set
+their `DUTIS_EVENT_LOG` / `DUTIS_EVENT_COMMAND` environment variables, to emit
+`dutis_drift` checks and governed mutation lifecycle events. Event-command
+stdout is discarded and cannot corrupt the JSON-RPC stream. See
+[event sinks](event-sinks.md).

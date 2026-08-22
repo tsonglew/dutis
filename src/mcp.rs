@@ -2,6 +2,7 @@ use crate::application::{find_apps_for_extension, normalize_extension, Applicati
 use crate::association::{AssociationKind, AssociationTarget, HandlerRole};
 use crate::config::DutisConfig;
 use crate::drift::DriftReport;
+use crate::events::{emit_best_effort, EventSource, EventType};
 use crate::governance::{
     execute_governed_plan, AuditStore, GovernanceError, GovernanceErrorKind, LoadedPolicy,
     MutationChannel, MutationOperation, MutationRequest,
@@ -361,7 +362,9 @@ impl<B: McpBackend> McpServer<B> {
             }
             "dutis_drift" => {
                 let config = parse_config(arguments)?;
-                self.backend.drift(&config).map_err(operation_error)
+                let report = self.backend.drift(&config).map_err(operation_error)?;
+                emit_best_effort(EventType::DriftChecked, EventSource::Mcp, &report);
+                Ok(report)
             }
             "dutis_query" => {
                 let extension = argument_string(arguments, "extension")?;

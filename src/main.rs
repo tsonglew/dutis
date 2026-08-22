@@ -15,6 +15,10 @@ use dutis::application::{
 use dutis::association::{AssociationKind, AssociationTarget, HandlerRole};
 use dutis::config::DutisConfig;
 use dutis::drift::{send_macos_notification, DriftReport, DriftState, DriftTracker};
+use dutis::events::{
+    configure_process_sinks, emit_best_effort, EventSource, EventType, EVENT_COMMAND_ENV,
+    EVENT_LOG_ENV,
+};
 use dutis::governance::{
     execute_governed_plan, ApprovalMode, AuditStore, GovernanceErrorKind, GovernedMutation,
     LoadedPolicy, MutationChannel, MutationOperation, MutationRequest, PolicyAssessment,
@@ -229,8 +233,11 @@ fn main() -> ExitCode {
         .map(command_name)
         .unwrap_or("interactive");
     let json = cli.command.as_ref().is_some_and(command_uses_json);
+    let event_setup =
+        configure_process_sinks(cli.event_log.as_deref(), cli.event_command.as_deref())
+            .map_err(|error| CliError::usage(format!("invalid event sink: {error:#}")));
 
-    match dispatch(cli.command) {
+    match event_setup.and_then(|_| dispatch(cli.command)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             if json {
@@ -546,6 +553,11 @@ fn run_watch(args: WatchArgs) -> Result<(), CliError> {
             report,
             remediation,
         };
+        emit_best_effort(
+            EventType::DriftChecked,
+            EventSource::Watcher,
+            &result.report,
+        );
         print_watch_result(&result, args.json)?;
         if args.once {
             return Ok(());
@@ -697,6 +709,11 @@ fn run_launch_agent_install(args: LaunchAgentInstallArgs) -> Result<(), CliError
             "DUTIS_POLICY_FILE".to_owned(),
             value.to_string_lossy().into_owned(),
         );
+    }
+    for name in [EVENT_LOG_ENV, EVENT_COMMAND_ENV] {
+        if let Some(value) = std::env::var_os(name).filter(|value| !value.is_empty()) {
+            environment.insert(name.to_owned(), value.to_string_lossy().into_owned());
+        }
     }
     let spec = LaunchAgentSpec {
         executable,

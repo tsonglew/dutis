@@ -177,10 +177,31 @@ Acceptance criteria:
 - Unit and fake-`duti` integration tests cover normalization, planning, dry-run,
   mutation arguments, snapshotting, auditing, and verification.
 
+## Phase 9: Event sinks
+
+Status: implemented for v2.13.0
+
+Expose versioned drift and mutation lifecycle events without requiring
+automation to scrape terminal output or audit directories.
+
+Acceptance criteria:
+
+- Global CLI options and environment variables configure private JSONL and
+  trusted local-command sinks.
+- Every drift check emits a `drift.checked` event; governed mutations emit
+  pending, denied, failed, and completed lifecycle events after the
+  corresponding durable audit update.
+- Event commands receive exactly one JSON object on stdin, with stdout
+  discarded so CLI and MCP protocol output cannot be corrupted.
+- Sink delivery is best effort and cannot bypass policy, suppress audit
+  storage, or change the result of a completed mutation.
+- LaunchAgent installation preserves normalized sink paths without persisting
+  approval tokens.
+
 ## Near-term engineering sequence
 
-1. Release Phase 8 and validate typed association read-back on supported macOS
-   releases and both CPU architectures.
-2. Add richer event sinks for drift and mutation events.
-3. Extend application metadata discovery beyond filename extensions where
+1. Release Phase 9 and validate long-running event delivery and log rotation.
+2. Extend application metadata discovery beyond filename extensions where
    Launch Services exposes reliable declarations.
+3. Add optional network adapters as external event commands, keeping transport
+   credentials outside Dutis configuration and audit records.
