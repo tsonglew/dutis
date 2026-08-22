@@ -4,7 +4,8 @@ Merges into `master` trigger `.github/workflows/release.yml`. The workflow:
 
 1. Reads the version from `Cargo.toml` and creates the matching `vX.Y.Z` tag if it does not exist.
 2. Runs formatting, Clippy, and unit tests.
-3. Builds Intel and Apple Silicon binaries and combines them into one universal macOS binary.
+3. Builds Intel and Apple Silicon binaries, combines them into one universal
+   macOS binary, and packages the bundled Dutis agent skill.
 4. Publishes the archive and SHA-256 checksum to GitHub Releases.
 5. Updates `Formula/dutis.rb` in `tsonglew/homebrew-tap`.
 
@@ -39,4 +40,5 @@ After the workflow succeeds, verify installation in a clean environment:
 brew update
 brew install tsonglew/tap/dutis
 dutis --help
+test -f "$(brew --prefix dutis)/share/dutis/skills/dutis/SKILL.md"
 ```

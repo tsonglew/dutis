@@ -55,6 +55,7 @@ Apply a reviewed plan by copying its digest:
 ```bash
 dutis apply dutis.toml \
   --plan-digest <digest-from-plan> \
+  --requester <human-or-agent-id> \
   --yes \
   --json
 ```
@@ -68,6 +69,11 @@ for one association does not hide other results: Dutis continues, returns every
 per-entry result, and exits with code `8` when any item fails. Entries already
 in the desired state are skipped, so reapplying a converged configuration is a
 no-op.
+
+Before the first mutation, Dutis evaluates the plan against the effective local
+policy and creates a persistent pending audit record. Policy denial uses exit
+code `9` and no association is changed. See
+[policy and mutation audit](policy-and-audit.md).
 
 ## Versioning and migration
 
@@ -90,3 +96,4 @@ no-op.
 | `6` | State inspection or operation failed |
 | `7` | Reviewed plan is stale |
 | `8` | One or more associations failed to apply or verify |
+| `9` | Local mutation policy denied the plan or approval |
