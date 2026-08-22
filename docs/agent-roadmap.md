@@ -107,6 +107,8 @@ Acceptance criteria:
 
 ## Phase 5: Agent skill and policy layer
 
+Status: implemented for v2.9.0
+
 Ship a Dutis skill for common workflows and add local policy controls such as
 allowed extensions, allowed applications, protected associations, and required
 approval modes. Record who requested each change and which verified plan was
@@ -138,7 +140,8 @@ pipeline across all association types.
 
 ## Near-term engineering sequence
 
-1. Release Phase 4 and validate read-only MCP discovery across representative
-   agent clients.
-2. Add agent skills and local policy controls before any autonomous mode.
-3. Persist mutation audit records as part of the policy layer.
+1. Release Phase 5 and validate policy behavior across CLI, interactive, and
+   MCP mutation paths.
+2. Add explainable, opt-in profiles and recommendations.
+3. Design notification-first drift detection on top of the audited policy
+   layer.

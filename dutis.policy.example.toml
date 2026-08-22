@@ -1,0 +1,10 @@
+version = 1
+approval_mode = "explicit"
+
+# Omit either allowlist to permit any value. An empty list permits none.
+allowed_extensions = ["md", "txt", "json"]
+allowed_applications = ["com.microsoft.VSCode", "com.apple.TextEdit"]
+
+# A protected extension may only remain on, or be restored to, this bundle ID.
+[protected_associations]
+pdf = "com.apple.Preview"

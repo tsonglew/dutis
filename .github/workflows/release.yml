@@ -176,8 +176,10 @@ jobs:
             target/x86_64-apple-darwin/release/dutis \
             -output dist/package/dutis
           chmod +x dist/package/dutis
+          cp -R skills dist/package/skills
+          cp dutis.policy.example.toml dist/package/dutis.policy.example.toml
           lipo -info dist/package/dutis
-          tar -C dist/package -czf "dist/${archive}" dutis
+          tar -C dist/package -czf "dist/${archive}" dutis skills dutis.policy.example.toml
           cd dist
           shasum -a 256 "${archive}" > "${archive}.sha256"
 

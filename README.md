@@ -20,6 +20,7 @@ A comprehensive Rust application for viewing file extensions supported by macOS 
 - 📋 **Declarative Configuration**: Plan, diff, apply, and verify a versioned TOML policy
 - ↩️ **Snapshots and Rollback**: Persist pre-change state and restore it through the verified plan pipeline
 - 🔌 **Local MCP Server**: Give agents read-only discovery and planning tools with separately gated writes
+- 🛡️ **Policy and Audit**: Enforce local allowlists and approvals with durable, verified mutation records
 
 ## Installation
 
@@ -140,11 +141,26 @@ fresh plan digest and the server-side `DUTIS_MCP_APPROVAL_TOKEN`. See the
 [MCP server guide](docs/mcp-server.md) for client configuration, tool schemas,
 and the audit contract.
 
+Inspect policy decisions and persistent mutation records:
+
+```bash
+dutis policy show --json
+dutis policy check dutis.toml --json
+dutis audit --json
+```
+
+All write paths enforce the same local policy before mutation and record the
+requester, reviewed plan, result, and verification. See the
+[policy and audit guide](docs/policy-and-audit.md). A reusable agent workflow is
+included at [`skills/dutis/SKILL.md`](skills/dutis/SKILL.md).
+Homebrew installs it under `$(brew --prefix dutis)/share/dutis/skills/dutis`.
+
 Applications can be selected by exact bundle ID, exact application path, or an
 unambiguous application name. JSON responses use API version `1`. Exit codes are
 `0` for success, `2` for usage errors, `3` for no match, `4` for ambiguous
 selectors, `5` for an unavailable dependency, and `6` for operation failure.
 Declarative apply also uses `7` for a stale plan and `8` for partial failure.
+Policy denial uses exit code `9`.
 
 The product and engineering sequence for declarative configuration, rollback,
 MCP, agent policies, profiles, and drift detection is documented in the

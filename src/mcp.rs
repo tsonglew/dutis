@@ -1,9 +1,11 @@
 use crate::application::{find_apps_for_extension, normalize_extension, ApplicationCatalog};
 use crate::config::DutisConfig;
-use crate::planner::{build_plan, AssociationPlan};
-use crate::snapshot::{
-    apply_plan_with_snapshot, build_rollback_plan, SnapshotReason, SnapshotStore,
+use crate::governance::{
+    execute_governed_plan, AuditStore, GovernanceError, GovernanceErrorKind, LoadedPolicy,
+    MutationChannel, MutationOperation, MutationRequest,
 };
+use crate::planner::{build_plan, AssociationPlan};
+use crate::snapshot::{build_rollback_plan, SnapshotReason, SnapshotStore};
 use crate::system;
 use anyhow::{anyhow, Context, Result};
 use serde::Serialize;
@@ -71,21 +73,22 @@ pub struct McpAuditEvent {
     pub error_kind: Option<String>,
 }
 
-#[derive(Serialize)]
-struct MutationResult {
-    safety_snapshot_id: Option<String>,
-    #[serde(flatten)]
-    report: crate::planner::ApplyReport,
-}
-
 trait McpBackend {
     fn list(&mut self) -> Result<Value>;
     fn query(&mut self, extension: &str) -> Result<Value>;
     fn get(&mut self, extension: &str) -> Result<Value>;
     fn plan(&mut self, config: &DutisConfig) -> Result<AssociationPlan>;
-    fn apply(&mut self, plan: &AssociationPlan, reason: SnapshotReason) -> Result<Value>;
+    fn apply(
+        &mut self,
+        plan: &AssociationPlan,
+        reason: SnapshotReason,
+        request: &MutationRequest,
+    ) -> Result<Value>;
     fn history(&mut self) -> Result<Value>;
     fn rollback_plan(&mut self, snapshot_id: &str) -> Result<AssociationPlan>;
+    fn policy(&mut self) -> Result<Value>;
+    fn policy_check(&mut self, plan: &AssociationPlan) -> Result<Value>;
+    fn audit(&mut self) -> Result<Value>;
 }
 
 struct SystemBackend;
@@ -120,14 +123,15 @@ impl McpBackend for SystemBackend {
         build_plan(config, &catalog.applications, system::query_default_app)
     }
 
-    fn apply(&mut self, plan: &AssociationPlan, reason: SnapshotReason) -> Result<Value> {
-        let store = SnapshotStore::from_environment()?;
-        let protected = apply_plan_with_snapshot(&store, plan, reason, system::set_default_app)?;
-        serde_json::to_value(MutationResult {
-            safety_snapshot_id: protected.safety_snapshot.map(|snapshot| snapshot.id),
-            report: protected.report,
-        })
-        .context("failed to serialize mutation result")
+    fn apply(
+        &mut self,
+        plan: &AssociationPlan,
+        reason: SnapshotReason,
+        request: &MutationRequest,
+    ) -> Result<Value> {
+        let result = execute_governed_plan(plan, reason, request, system::set_default_app)
+            .map_err(anyhow::Error::from)?;
+        serde_json::to_value(result).context("failed to serialize mutation result")
     }
 
     fn history(&mut self) -> Result<Value> {
@@ -141,6 +145,25 @@ impl McpBackend for SystemBackend {
         system::duti_version()?;
         let catalog = ApplicationCatalog::scan()?;
         build_rollback_plan(&snapshot, &catalog.applications, system::query_default_app)
+    }
+
+    fn policy(&mut self) -> Result<Value> {
+        let policy = LoadedPolicy::from_environment()?;
+        serde_json::to_value(policy.summary()).context("failed to serialize mutation policy")
+    }
+
+    fn policy_check(&mut self, plan: &AssociationPlan) -> Result<Value> {
+        let policy = LoadedPolicy::from_environment()?;
+        Ok(json!({
+            "policy": policy.summary(),
+            "assessment": policy.policy.assess(plan),
+            "plan": plan,
+        }))
+    }
+
+    fn audit(&mut self) -> Result<Value> {
+        let records = AuditStore::from_environment()?.history()?;
+        serde_json::to_value(records).context("failed to serialize mutation audit history")
     }
 }
 
@@ -282,6 +305,13 @@ impl<B: McpBackend> McpServer<B> {
                 serde_json::to_value(plan).map_err(|error| operation_error(error.into()))
             }
             "dutis_history" => self.backend.history().map_err(operation_error),
+            "dutis_policy" => self.backend.policy().map_err(operation_error),
+            "dutis_policy_check" => {
+                let config = parse_config(arguments)?;
+                let plan = self.backend.plan(&config).map_err(operation_error)?;
+                self.backend.policy_check(&plan).map_err(operation_error)
+            }
+            "dutis_audit" => self.backend.audit().map_err(operation_error),
             "dutis_rollback_plan" => {
                 let snapshot_id = argument_string(arguments, "snapshot_id")?;
                 let plan = self
@@ -291,19 +321,28 @@ impl<B: McpBackend> McpServer<B> {
                 serde_json::to_value(plan).map_err(|error| operation_error(error.into()))
             }
             "dutis_apply" => {
-                self.authorize_write(arguments)?;
+                let approval_token = self.authorize_write(arguments)?;
+                let requester = argument_string(arguments, "requester")?;
                 let config = parse_config(arguments)?;
                 let expected_digest = argument_string(arguments, "plan_digest")?;
                 let plan = self.backend.plan(&config).map_err(operation_error)?;
                 validate_mutation_plan(&plan, expected_digest)?;
+                let request = MutationRequest {
+                    requester: requester.to_owned(),
+                    channel: MutationChannel::Mcp,
+                    operation: MutationOperation::Apply,
+                    explicit_approval: true,
+                    approval_token: Some(approval_token),
+                };
                 let result = self
                     .backend
-                    .apply(&plan, SnapshotReason::BeforeApply)
+                    .apply(&plan, SnapshotReason::BeforeApply, &request)
                     .map_err(operation_error)?;
                 validate_apply_result(result)
             }
             "dutis_rollback" => {
-                self.authorize_write(arguments)?;
+                let approval_token = self.authorize_write(arguments)?;
+                let requester = argument_string(arguments, "requester")?;
                 let snapshot_id = argument_string(arguments, "snapshot_id")?;
                 let expected_digest = argument_string(arguments, "plan_digest")?;
                 let plan = self
@@ -311,9 +350,16 @@ impl<B: McpBackend> McpServer<B> {
                     .rollback_plan(snapshot_id)
                     .map_err(operation_error)?;
                 validate_mutation_plan(&plan, expected_digest)?;
+                let request = MutationRequest {
+                    requester: requester.to_owned(),
+                    channel: MutationChannel::Mcp,
+                    operation: MutationOperation::Rollback,
+                    explicit_approval: true,
+                    approval_token: Some(approval_token),
+                };
                 let result = self
                     .backend
-                    .apply(&plan, SnapshotReason::BeforeRollback)
+                    .apply(&plan, SnapshotReason::BeforeRollback, &request)
                     .map_err(operation_error)?;
                 validate_apply_result(result)
             }
@@ -327,7 +373,7 @@ impl<B: McpBackend> McpServer<B> {
     fn authorize_write(
         &self,
         arguments: &Map<String, Value>,
-    ) -> std::result::Result<(), ToolError> {
+    ) -> std::result::Result<String, ToolError> {
         if !self.options.allow_writes {
             return Err(ToolError::new(
                 "write_disabled",
@@ -346,7 +392,7 @@ impl<B: McpBackend> McpServer<B> {
                 "approval token does not match",
             ));
         }
-        Ok(())
+        Ok(provided.to_owned())
     }
 }
 
@@ -418,6 +464,17 @@ fn parse_config(arguments: &Map<String, Value>) -> std::result::Result<DutisConf
 }
 
 fn operation_error(error: anyhow::Error) -> ToolError {
+    if let Some(governance) = error.downcast_ref::<GovernanceError>() {
+        let kind = match governance.kind() {
+            GovernanceErrorKind::PolicyDenied => "policy_denied",
+            GovernanceErrorKind::AuditFailed => "audit_failed",
+            GovernanceErrorKind::SnapshotFailed => "snapshot_failed",
+        };
+        return ToolError::new(kind, governance.to_string()).with_details(json!({
+            "audit_id": governance.audit_id(),
+            "violations": governance.violations(),
+        }));
+    }
     ToolError::new("operation_failed", format!("{error:#}"))
 }
 
@@ -554,13 +611,31 @@ fn tool_definitions(allow_writes: bool) -> Vec<Value> {
         tool_definition(
             "dutis_history",
             "List locally stored safety snapshots in newest-first order.",
-            empty_schema,
+            empty_schema.clone(),
             read_annotations.clone(),
         ),
         tool_definition(
             "dutis_rollback_plan",
             "Build a deterministic rollback plan and digest without changing the system.",
             snapshot_schema.clone(),
+            read_annotations.clone(),
+        ),
+        tool_definition(
+            "dutis_policy",
+            "Inspect the effective local mutation policy without exposing token hashes.",
+            empty_schema.clone(),
+            read_annotations.clone(),
+        ),
+        tool_definition(
+            "dutis_policy_check",
+            "Build a plan and evaluate it against the effective local mutation policy.",
+            config_schema.clone(),
+            read_annotations.clone(),
+        ),
+        tool_definition(
+            "dutis_audit",
+            "List persistent local mutation audit records in newest-first order.",
+            empty_schema,
             read_annotations,
         ),
     ];
@@ -579,9 +654,10 @@ fn tool_definitions(allow_writes: bool) -> Vec<Value> {
                 "properties": {
                     "config_toml": {"type": "string", "minLength": 1},
                     "plan_digest": {"type": "string", "minLength": 1},
-                    "approval_token": {"type": "string", "minLength": 1}
+                    "approval_token": {"type": "string", "minLength": 1},
+                    "requester": {"type": "string", "minLength": 1}
                 },
-                "required": ["config_toml", "plan_digest", "approval_token"],
+                "required": ["config_toml", "plan_digest", "approval_token", "requester"],
                 "additionalProperties": false,
             }),
             write_annotations.clone(),
@@ -594,9 +670,10 @@ fn tool_definitions(allow_writes: bool) -> Vec<Value> {
                 "properties": {
                     "snapshot_id": {"type": "string", "minLength": 1},
                     "plan_digest": {"type": "string", "minLength": 1},
-                    "approval_token": {"type": "string", "minLength": 1}
+                    "approval_token": {"type": "string", "minLength": 1},
+                    "requester": {"type": "string", "minLength": 1}
                 },
-                "required": ["snapshot_id", "plan_digest", "approval_token"],
+                "required": ["snapshot_id", "plan_digest", "approval_token", "requester"],
                 "additionalProperties": false,
             }),
             write_annotations,
@@ -675,7 +752,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::planner::{ApplyReport, PlanSummary};
+    use crate::planner::PlanSummary;
 
     struct FakeBackend {
         plan: AssociationPlan,
@@ -719,19 +796,22 @@ mod tests {
             Ok(self.plan.clone())
         }
 
-        fn apply(&mut self, plan: &AssociationPlan, _reason: SnapshotReason) -> Result<Value> {
+        fn apply(
+            &mut self,
+            plan: &AssociationPlan,
+            _reason: SnapshotReason,
+            _request: &MutationRequest,
+        ) -> Result<Value> {
             self.apply_calls += 1;
-            serde_json::to_value(MutationResult {
-                safety_snapshot_id: None,
-                report: ApplyReport {
-                    plan_digest: plan.digest.clone(),
-                    applied: 0,
-                    skipped: 0,
-                    failed: 0,
-                    results: Vec::new(),
-                },
-            })
-            .map_err(Into::into)
+            Ok(json!({
+                "audit_id": "test-audit",
+                "safety_snapshot_id": null,
+                "plan_digest": plan.digest,
+                "applied": 0,
+                "skipped": 0,
+                "failed": 0,
+                "results": []
+            }))
         }
 
         fn history(&mut self) -> Result<Value> {
@@ -740,6 +820,21 @@ mod tests {
 
         fn rollback_plan(&mut self, _snapshot_id: &str) -> Result<AssociationPlan> {
             Ok(self.plan.clone())
+        }
+
+        fn policy(&mut self) -> Result<Value> {
+            Ok(json!({"approval_mode": "explicit"}))
+        }
+
+        fn policy_check(&mut self, plan: &AssociationPlan) -> Result<Value> {
+            Ok(json!({
+                "assessment": {"allowed": true, "approval_mode": "explicit", "violations": []},
+                "plan": plan
+            }))
+        }
+
+        fn audit(&mut self) -> Result<Value> {
+            Ok(json!([]))
         }
     }
 
@@ -774,6 +869,8 @@ mod tests {
             .map(|tool| tool["name"].as_str().unwrap())
             .collect::<Vec<_>>();
         assert!(names.contains(&"dutis_diff"));
+        assert!(names.contains(&"dutis_policy_check"));
+        assert!(names.contains(&"dutis_audit"));
         assert!(!names.contains(&"dutis_apply"));
         assert!(!names.contains(&"dutis_rollback"));
     }
@@ -796,6 +893,16 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(names.contains(&"dutis_apply"));
         assert!(names.contains(&"dutis_rollback"));
+        let apply = response["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "dutis_apply")
+            .unwrap();
+        assert!(apply["inputSchema"]["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("requester")));
     }
 
     #[test]
@@ -821,7 +928,8 @@ mod tests {
                 "arguments": {
                     "config_toml": config_toml(),
                     "plan_digest": "reviewed-digest",
-                    "approval_token": "a-secure-test-token"
+                    "approval_token": "a-secure-test-token",
+                    "requester": "test-agent"
                 }
             }),
         ));
@@ -851,7 +959,8 @@ mod tests {
                 "arguments": {
                     "config_toml": config_toml(),
                     "plan_digest": "reviewed-digest",
-                    "approval_token": "wrong-token"
+                    "approval_token": "wrong-token",
+                    "requester": "test-agent"
                 }
             }),
         ));
@@ -869,7 +978,8 @@ mod tests {
                 "arguments": {
                     "config_toml": config_toml(),
                     "plan_digest": "old-digest",
-                    "approval_token": "a-secure-test-token"
+                    "approval_token": "a-secure-test-token",
+                    "requester": "test-agent"
                 }
             }),
         ));
@@ -894,7 +1004,8 @@ mod tests {
                 "arguments": {
                     "config_toml": config_toml(),
                     "plan_digest": "reviewed-digest",
-                    "approval_token": "a-secure-test-token"
+                    "approval_token": "a-secure-test-token",
+                    "requester": "test-agent"
                 }
             }),
         ));

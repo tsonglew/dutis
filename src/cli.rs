@@ -35,6 +35,10 @@ pub enum CliCommand {
     History(OutputArgs),
     /// Restore associations from a local snapshot
     Rollback(RollbackArgs),
+    /// Inspect the effective local mutation policy
+    Policy(PolicyArgs),
+    /// List persistent local mutation audit records
+    Audit(OutputArgs),
     /// Run the local Model Context Protocol server over stdio
     Mcp(McpArgs),
     /// Check whether dutis and its runtime dependency are ready
@@ -72,6 +76,9 @@ pub struct SetArgs {
     /// Emit stable machine-readable JSON
     #[arg(long)]
     pub json: bool,
+    /// Identity recorded in the local mutation audit
+    #[arg(long)]
+    pub requester: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -99,6 +106,9 @@ pub struct ApplyArgs {
     /// Emit stable machine-readable JSON
     #[arg(long)]
     pub json: bool,
+    /// Identity recorded in the local mutation audit
+    #[arg(long)]
+    pub requester: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -133,6 +143,32 @@ pub struct RollbackArgs {
     /// Confirm a non-interactive rollback
     #[arg(long)]
     pub yes: bool,
+    /// Emit stable machine-readable JSON
+    #[arg(long)]
+    pub json: bool,
+    /// Identity recorded in the local mutation audit
+    #[arg(long)]
+    pub requester: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct PolicyArgs {
+    #[command(subcommand)]
+    pub command: PolicyCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PolicyCommand {
+    /// Show the effective policy and its source
+    Show(OutputArgs),
+    /// Check a declarative plan against the effective policy
+    Check(PolicyCheckArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct PolicyCheckArgs {
+    /// Path to a versioned dutis TOML configuration
+    pub config: PathBuf,
     /// Emit stable machine-readable JSON
     #[arg(long)]
     pub json: bool,
@@ -246,5 +282,12 @@ mod tests {
             cli.command,
             Some(CliCommand::Mcp(McpArgs { allow_writes: true }))
         ));
+    }
+
+    #[test]
+    fn parses_policy_and_audit_commands() {
+        assert!(Cli::try_parse_from(["dutis", "policy", "show", "--json"]).is_ok());
+        assert!(Cli::try_parse_from(["dutis", "policy", "check", "dutis.toml", "--json"]).is_ok());
+        assert!(Cli::try_parse_from(["dutis", "audit", "--json"]).is_ok());
     }
 }

@@ -20,6 +20,8 @@ formula = <<~RUBY
 
     def install
       bin.install "dutis"
+      pkgshare.install "skills"
+      pkgshare.install "dutis.policy.example.toml"
     end
 
     test do

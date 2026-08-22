@@ -1,4 +1,5 @@
 use serde_json::Value;
+use std::fs;
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -119,7 +120,8 @@ fn mcp_stdio_initializes_and_advertises_read_only_tools() {
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\"}}\n",
         "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n",
         "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}\n",
-        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"dutis_history\",\"arguments\":{}}}\n"
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"dutis_history\",\"arguments\":{}}}\n",
+        "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"dutis_policy\",\"arguments\":{}}}\n"
     );
     child
         .stdin
@@ -135,16 +137,27 @@ fn mcp_stdio_initializes_and_advertises_read_only_tools() {
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(responses.len(), 3);
+    assert_eq!(responses.len(), 4);
     assert_eq!(responses[0]["result"]["protocolVersion"], "2024-11-05");
     let tools = responses[1]["result"]["tools"].as_array().unwrap();
     assert!(tools.iter().any(|tool| tool["name"] == "dutis_diff"));
+    assert!(tools.iter().any(|tool| tool["name"] == "dutis_policy"));
     assert!(!tools.iter().any(|tool| tool["name"] == "dutis_apply"));
+    assert_eq!(
+        responses[3]["result"]["structuredContent"]["data"]["approval_mode"],
+        "explicit"
+    );
 
-    let audit: Value = serde_json::from_slice(&output.stderr).unwrap();
-    assert_eq!(audit["schema_version"], 1);
-    assert_eq!(audit["tool"], "dutis_history");
-    assert_eq!(audit["access"], "read");
+    let audit = String::from_utf8(output.stderr)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(audit.len(), 2);
+    assert_eq!(audit[0]["schema_version"], 1);
+    assert_eq!(audit[0]["tool"], "dutis_history");
+    assert_eq!(audit[1]["tool"], "dutis_policy");
+    assert!(audit.iter().all(|event| event["access"] == "read"));
 }
 
 #[test]
@@ -159,4 +172,47 @@ fn mcp_write_mode_requires_a_server_side_approval_token() {
     assert!(String::from_utf8(output.stderr)
         .unwrap()
         .contains("DUTIS_MCP_APPROVAL_TOKEN"));
+}
+
+#[test]
+fn policy_show_redacts_token_hash_and_audit_starts_empty() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let state = std::env::temp_dir().join(format!(
+        "dutis-policy-integration-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&state).unwrap();
+    let policy_path = state.join("policy.toml");
+    let secret_hash = "a".repeat(64);
+    fs::write(
+        &policy_path,
+        format!("version = 1\napproval_mode = 'token'\napproval_token_sha256 = '{secret_hash}'\n"),
+    )
+    .unwrap();
+
+    let policy_output = dutis()
+        .env("DUTIS_STATE_DIR", &state)
+        .args(["policy", "show", "--json"])
+        .output()
+        .unwrap();
+    assert!(policy_output.status.success());
+    let policy: Value = serde_json::from_slice(&policy_output.stdout).unwrap();
+    assert_eq!(policy["data"]["approval_mode"], "token");
+    assert_eq!(policy["data"]["approval_token_configured"], true);
+    assert!(!String::from_utf8(policy_output.stdout)
+        .unwrap()
+        .contains(&secret_hash));
+
+    let audit_output = dutis()
+        .env("DUTIS_STATE_DIR", &state)
+        .args(["audit", "--json"])
+        .output()
+        .unwrap();
+    assert!(audit_output.status.success());
+    let audit: Value = serde_json::from_slice(&audit_output.stdout).unwrap();
+    assert_eq!(audit["data"].as_array().unwrap().len(), 0);
+    fs::remove_dir_all(state).unwrap();
 }

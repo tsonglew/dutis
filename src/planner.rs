@@ -2,13 +2,13 @@ use crate::application::{resolve_app, Application};
 use crate::config::DutisConfig;
 use crate::system::DefaultApplication;
 use anyhow::Result;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
 pub const PLAN_SCHEMA_VERSION: u32 = 1;
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanAction {
     Change,
@@ -16,7 +16,7 @@ pub enum PlanAction {
     Unresolved,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PlannedApplication {
     pub name: String,
     pub path: PathBuf,
@@ -33,7 +33,7 @@ impl PlannedApplication {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PlanEntry {
     pub extension: String,
     pub selector: String,
@@ -44,7 +44,7 @@ pub struct PlanEntry {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PlanSummary {
     pub total: usize,
     pub changes: usize,
@@ -52,7 +52,7 @@ pub struct PlanSummary {
     pub unresolved: usize,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AssociationPlan {
     pub schema_version: u32,
     pub config_version: u32,
@@ -67,7 +67,7 @@ impl AssociationPlan {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApplyStatus {
     Applied,
@@ -75,7 +75,7 @@ pub enum ApplyStatus {
     Failed,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ApplyEntryResult {
     pub extension: String,
     pub bundle_id: Option<String>,
@@ -84,7 +84,7 @@ pub struct ApplyEntryResult {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ApplyReport {
     pub plan_digest: String,
     pub applied: usize,

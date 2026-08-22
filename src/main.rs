@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{
-    ApplyArgs, Cli, CliCommand, ConfigArgs, ExtensionArgs, McpArgs, OutputArgs, RollbackArgs,
-    SetArgs, SnapshotArgs, SnapshotCommand, SnapshotCreateArgs,
+    ApplyArgs, Cli, CliCommand, ConfigArgs, ExtensionArgs, McpArgs, OutputArgs, PolicyArgs,
+    PolicyCheckArgs, PolicyCommand, RollbackArgs, SetArgs, SnapshotArgs, SnapshotCommand,
+    SnapshotCreateArgs,
 };
 use colored::*;
 use dutis::application::{
@@ -10,12 +11,16 @@ use dutis::application::{
     ApplicationCatalog,
 };
 use dutis::config::DutisConfig;
+use dutis::governance::{
+    execute_governed_plan, AuditStore, GovernanceErrorKind, GovernedMutation, LoadedPolicy,
+    MutationChannel, MutationOperation, MutationRequest, PolicyAssessment,
+};
 use dutis::planner::{
-    build_plan, ApplyReport, AssociationPlan, PlanAction, PlanEntry, PlanSummary,
+    assemble_plan, build_plan, AssociationPlan, PlanAction, PlanEntry, PlanSummary,
+    PlannedApplication,
 };
 use dutis::snapshot::{
-    apply_plan_with_snapshot, build_rollback_plan, capture_associations, SnapshotReason,
-    SnapshotStore, SnapshotSummary,
+    build_rollback_plan, capture_associations, SnapshotReason, SnapshotStore, SnapshotSummary,
 };
 use dutis::system;
 use serde::Serialize;
@@ -64,6 +69,10 @@ impl CliError {
 
     fn partial_failure(message: impl Into<String>, details: Value) -> Self {
         Self::new(8, "partial_failure", message).with_details(details)
+    }
+
+    fn policy_denied(message: impl Into<String>, details: Value) -> Self {
+        Self::new(9, "policy_denied", message).with_details(details)
     }
 
     fn new(code: u8, kind: &'static str, message: impl Into<String>) -> Self {
@@ -123,6 +132,10 @@ struct SetResult<'a> {
     extension: &'a str,
     application: &'a Application,
     command: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    audit_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    safety_snapshot_id: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -148,15 +161,15 @@ struct SnapshotCreated {
 }
 
 #[derive(Serialize)]
-struct MutationResult {
-    safety_snapshot_id: Option<String>,
-    #[serde(flatten)]
-    report: ApplyReport,
+struct RollbackPreview<'a> {
+    snapshot_id: &'a str,
+    plan: &'a AssociationPlan,
 }
 
 #[derive(Serialize)]
-struct RollbackPreview<'a> {
-    snapshot_id: &'a str,
+struct PolicyCheckResult<'a> {
+    policy: dutis::governance::PolicySummary,
+    assessment: PolicyAssessment,
     plan: &'a AssociationPlan,
 }
 
@@ -207,6 +220,8 @@ fn dispatch(command: Option<CliCommand>) -> Result<(), CliError> {
         Some(CliCommand::Snapshot(args)) => run_snapshot(args),
         Some(CliCommand::History(args)) => run_history(args),
         Some(CliCommand::Rollback(args)) => run_rollback(args),
+        Some(CliCommand::Policy(args)) => run_policy(args),
+        Some(CliCommand::Audit(args)) => run_audit(args),
         Some(CliCommand::Mcp(args)) => run_mcp(args),
         Some(CliCommand::Doctor(args)) => run_doctor(args),
     }
@@ -224,6 +239,8 @@ fn command_name(command: &CliCommand) -> &'static str {
         CliCommand::Snapshot(_) => "snapshot",
         CliCommand::History(_) => "history",
         CliCommand::Rollback(_) => "rollback",
+        CliCommand::Policy(_) => "policy",
+        CliCommand::Audit(_) => "audit",
         CliCommand::Mcp(_) => "mcp",
         CliCommand::Doctor(_) => "doctor",
     }
@@ -241,6 +258,11 @@ fn command_uses_json(command: &CliCommand) -> bool {
         },
         CliCommand::History(args) => args.json,
         CliCommand::Rollback(args) => args.json,
+        CliCommand::Policy(args) => match &args.command {
+            PolicyCommand::Show(args) => args.json,
+            PolicyCommand::Check(args) => args.json,
+        },
+        CliCommand::Audit(args) => args.json,
         CliCommand::Mcp(_) => false,
     }
 }
@@ -250,6 +272,110 @@ fn run_mcp(args: McpArgs) -> Result<(), CliError> {
         .map_err(|error| CliError::usage(format!("{error:#}")))?;
     dutis::mcp::serve_stdio(options)
         .map_err(|error| CliError::operation(format!("MCP server failed: {error:#}")))
+}
+
+fn run_policy(args: PolicyArgs) -> Result<(), CliError> {
+    match args.command {
+        PolicyCommand::Show(args) => run_policy_show(args),
+        PolicyCommand::Check(args) => run_policy_check(args),
+    }
+}
+
+fn run_policy_show(args: OutputArgs) -> Result<(), CliError> {
+    let policy = LoadedPolicy::from_environment()
+        .map_err(|error| CliError::usage(format!("failed to load policy: {error:#}")))?;
+    let summary = policy.summary();
+    if args.json {
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "policy",
+            data: summary,
+        })?;
+    } else {
+        println!("Policy: {}", summary.path.display());
+        println!(
+            "Source: {}",
+            if summary.exists {
+                "configured"
+            } else {
+                "built-in default"
+            }
+        );
+        println!("Digest: {}", summary.digest);
+        println!("Approval mode: {:?}", summary.approval_mode);
+        println!(
+            "Approval token configured: {}",
+            summary.approval_token_configured
+        );
+    }
+    Ok(())
+}
+
+fn run_policy_check(args: PolicyCheckArgs) -> Result<(), CliError> {
+    let plan = build_declarative_plan(&args.config)?;
+    let policy = LoadedPolicy::from_environment()
+        .map_err(|error| CliError::usage(format!("failed to load policy: {error:#}")))?;
+    let result = PolicyCheckResult {
+        policy: policy.summary(),
+        assessment: policy.policy.assess(&plan),
+        plan: &plan,
+    };
+    if args.json {
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "policy",
+            data: result,
+        })?;
+    } else {
+        println!(
+            "Policy decision: {}",
+            if result.assessment.allowed {
+                "allowed"
+            } else {
+                "denied"
+            }
+        );
+        for violation in &result.assessment.violations {
+            println!("DENY: {violation}");
+        }
+        println!();
+        print_plan(&plan, false);
+    }
+    Ok(())
+}
+
+fn run_audit(args: OutputArgs) -> Result<(), CliError> {
+    let store = AuditStore::from_environment().map_err(|error| {
+        CliError::operation(format!("failed to resolve audit storage: {error:#}"))
+    })?;
+    let records = store
+        .history()
+        .map_err(|error| CliError::operation(format!("failed to read audit history: {error:#}")))?;
+    if args.json {
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "audit",
+            data: records,
+        })?;
+    } else if records.is_empty() {
+        println!(
+            "No mutation audit records found in {}",
+            store.root().display()
+        );
+    } else {
+        for record in records {
+            println!(
+                "{}\t{}\t{:?}\t{:?}\t{}\t{:?}",
+                record.id,
+                record.timestamp,
+                record.channel,
+                record.operation,
+                record.requester,
+                record.outcome
+            );
+        }
+    }
+    Ok(())
 }
 
 fn run_list(args: OutputArgs) -> Result<(), CliError> {
@@ -382,16 +508,47 @@ fn run_set(args: SetArgs) -> Result<(), CliError> {
         "all".to_owned(),
     ];
 
-    let status = apply_or_preview(
-        args.dry_run,
-        &extension,
-        bundle_id,
-        |extension, bundle_id| {
-            system::duti_version().map_err(|error| CliError::dependency(format!("{error:#}")))?;
-            system::set_default_app(extension, bundle_id)
-                .map_err(|error| CliError::operation(format!("{error:#}")))
-        },
-    )?;
+    let mutation = if args.dry_run {
+        None
+    } else {
+        system::duti_version().map_err(|error| CliError::dependency(format!("{error:#}")))?;
+        let current = system::query_default_app(&extension)
+            .map_err(|error| CliError::operation(format!("{error:#}")))?;
+        let action = if current.as_ref().map(|value| value.bundle_id.as_str()) == Some(bundle_id) {
+            PlanAction::Unchanged
+        } else {
+            PlanAction::Change
+        };
+        let plan = assemble_plan(
+            dutis::config::CONFIG_VERSION,
+            vec![PlanEntry {
+                extension: extension.clone(),
+                selector: args.app_selector.clone(),
+                current,
+                target: PlannedApplication::from_application(app),
+                action,
+                reason: None,
+            }],
+        )
+        .map_err(|error| CliError::operation(format!("failed to build set plan: {error:#}")))?;
+        let request = cli_mutation_request(args.requester.as_deref(), MutationOperation::Set);
+        let result = execute_governed_cli_plan(&plan, SnapshotReason::BeforeApply, &request)?;
+        if result.report.failed > 0 {
+            let details = serde_json::to_value(&result).map_err(|error| {
+                CliError::operation(format!("failed to serialize report: {error}"))
+            })?;
+            return Err(CliError::partial_failure(
+                "the association failed to apply or verify",
+                details,
+            ));
+        }
+        Some(result)
+    };
+    let status = match mutation.as_ref() {
+        None => "planned",
+        Some(result) if result.report.applied > 0 => "applied",
+        Some(_) => "unchanged",
+    };
 
     if args.json {
         write_json(&JsonEnvelope {
@@ -402,6 +559,10 @@ fn run_set(args: SetArgs) -> Result<(), CliError> {
                 extension: &extension,
                 application: app,
                 command,
+                audit_id: mutation.as_ref().map(|result| result.audit_id.as_str()),
+                safety_snapshot_id: mutation
+                    .as_ref()
+                    .and_then(|result| result.safety_snapshot_id.as_deref()),
             },
         })?;
     } else if args.dry_run {
@@ -410,11 +571,15 @@ fn run_set(args: SetArgs) -> Result<(), CliError> {
             app.name
         );
         println!("Command: {}", shell_display(&command));
-    } else {
+    } else if let Some(result) = mutation {
         println!(
             "Set .{extension} to {} ({bundle_id}) and verified it",
             app.name
         );
+        println!("Audit record: {}", result.audit_id);
+        if let Some(snapshot_id) = result.safety_snapshot_id {
+            println!("Safety snapshot: {snapshot_id}");
+        }
     }
     Ok(())
 }
@@ -510,7 +675,8 @@ fn run_apply(args: ApplyArgs) -> Result<(), CliError> {
         ));
     }
 
-    let result = execute_plan_with_snapshot(&plan, SnapshotReason::BeforeApply)?;
+    let request = cli_mutation_request(args.requester.as_deref(), MutationOperation::Apply);
+    let result = execute_governed_cli_plan(&plan, SnapshotReason::BeforeApply, &request)?;
     if result.report.failed > 0 {
         let details = serde_json::to_value(&result)
             .map_err(|error| CliError::operation(format!("failed to serialize report: {error}")))?;
@@ -676,7 +842,8 @@ fn run_rollback(args: RollbackArgs) -> Result<(), CliError> {
         .with_details(details));
     }
 
-    let result = execute_plan_with_snapshot(&plan, SnapshotReason::BeforeRollback)?;
+    let request = cli_mutation_request(args.requester.as_deref(), MutationOperation::Rollback);
+    let result = execute_governed_cli_plan(&plan, SnapshotReason::BeforeRollback, &request)?;
     if result.report.failed > 0 {
         let details = serde_json::to_value(&result)
             .map_err(|error| CliError::operation(format!("failed to serialize report: {error}")))?;
@@ -704,21 +871,53 @@ fn run_rollback(args: RollbackArgs) -> Result<(), CliError> {
     Ok(())
 }
 
-fn execute_plan_with_snapshot(
+fn execute_governed_cli_plan(
     plan: &AssociationPlan,
     reason: SnapshotReason,
-) -> Result<MutationResult, CliError> {
-    let store = snapshot_store()?;
-    let protected = apply_plan_with_snapshot(&store, plan, reason, system::set_default_app)
-        .map_err(|error| {
-            CliError::operation(format!(
-                "failed to store safety snapshot; no changes were made: {error:#}"
-            ))
-        })?;
-    Ok(MutationResult {
-        safety_snapshot_id: protected.safety_snapshot.map(|snapshot| snapshot.id),
-        report: protected.report,
-    })
+    request: &MutationRequest,
+) -> Result<GovernedMutation, CliError> {
+    execute_governed_plan(plan, reason, request, system::set_default_app)
+        .map_err(governance_cli_error)
+}
+
+fn governance_cli_error(error: dutis::governance::GovernanceError) -> CliError {
+    let details = serde_json::json!({
+        "audit_id": error.audit_id(),
+        "violations": error.violations(),
+    });
+    if error.kind() == GovernanceErrorKind::PolicyDenied {
+        CliError::policy_denied(error.to_string(), details)
+    } else {
+        CliError::operation(error.to_string()).with_details(details)
+    }
+}
+
+fn cli_mutation_request(
+    requested_identity: Option<&str>,
+    operation: MutationOperation,
+) -> MutationRequest {
+    let requester = requested_identity
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            std::env::var("DUTIS_REQUESTER")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .or_else(|| {
+            std::env::var("USER")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(|| "local-user".to_owned());
+    MutationRequest {
+        requester,
+        channel: MutationChannel::Cli,
+        operation,
+        explicit_approval: true,
+        approval_token: std::env::var("DUTIS_APPROVAL_TOKEN").ok(),
+    }
 }
 
 fn snapshot_store() -> Result<SnapshotStore, CliError> {
@@ -777,7 +976,8 @@ fn print_plan(plan: &AssociationPlan, changes_only: bool) {
     println!("Plan digest: {}", plan.digest);
 }
 
-fn print_mutation_result(result: &MutationResult) {
+fn print_mutation_result(result: &GovernedMutation) {
+    println!("Audit record: {}", result.audit_id);
     if let Some(snapshot_id) = &result.safety_snapshot_id {
         println!("Safety snapshot: {snapshot_id}\n");
     }
@@ -797,22 +997,6 @@ fn print_mutation_result(result: &MutationResult) {
         "\nApplied: {}, skipped: {}, failed: {}",
         result.report.applied, result.report.skipped, result.report.failed
     );
-}
-
-fn apply_or_preview<F>(
-    dry_run: bool,
-    extension: &str,
-    bundle_id: &str,
-    apply: F,
-) -> Result<&'static str, CliError>
-where
-    F: FnOnce(&str, &str) -> Result<(), CliError>,
-{
-    if dry_run {
-        return Ok("planned");
-    }
-    apply(extension, bundle_id)?;
-    Ok("applied")
 }
 
 fn run_doctor(args: OutputArgs) -> Result<(), CliError> {
@@ -1050,13 +1234,45 @@ fn set_default_and_report(extension: &str, app: &Application) {
         .bundle_id
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("{} has no readable bundle identifier", app.path.display()))
-        .and_then(|bundle_id| system::set_default_app(extension, bundle_id));
+        .and_then(|bundle_id| {
+            system::duti_version()?;
+            let current = system::query_default_app(extension)?;
+            let action =
+                if current.as_ref().map(|value| value.bundle_id.as_str()) == Some(bundle_id) {
+                    PlanAction::Unchanged
+                } else {
+                    PlanAction::Change
+                };
+            let plan = assemble_plan(
+                dutis::config::CONFIG_VERSION,
+                vec![PlanEntry {
+                    extension: extension.to_owned(),
+                    selector: bundle_id.to_owned(),
+                    current,
+                    target: PlannedApplication::from_application(app),
+                    action,
+                    reason: None,
+                }],
+            )?;
+            let mut request = cli_mutation_request(None, MutationOperation::Set);
+            request.channel = MutationChannel::Interactive;
+            execute_governed_plan(
+                &plan,
+                SnapshotReason::BeforeApply,
+                &request,
+                system::set_default_app,
+            )
+            .map_err(anyhow::Error::from)
+        });
     match result {
-        Ok(()) => println!(
-            "✅ Successfully set {} as the default application for .{} files!",
-            app.name.bright_green(),
-            extension.yellow()
-        ),
+        Ok(result) => {
+            println!(
+                "✅ Successfully set {} as the default application for .{} files!",
+                app.name.bright_green(),
+                extension.yellow()
+            );
+            println!("Audit record: {}", result.audit_id);
+        }
         Err(error) => println!("❌ Failed to set default application: {error:#}"),
     }
 }
@@ -1160,14 +1376,5 @@ mod tests {
         assert_eq!(json["api_version"], "1");
         assert_eq!(json["command"], "test");
         assert_eq!(json["data"][0], "ok");
-    }
-
-    #[test]
-    fn dry_run_never_calls_mutating_operation() {
-        let status = apply_or_preview(true, "md", "com.example.Editor", |_, _| {
-            panic!("dry-run attempted a mutation")
-        })
-        .unwrap();
-        assert_eq!(status, "planned");
     }
 }

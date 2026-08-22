@@ -6,6 +6,22 @@
 brew install tsonglew/tap/dutis
 ```
 
+The formula also installs the bundled agent skill under:
+
+```text
+$(brew --prefix dutis)/share/dutis/skills/dutis
+```
+
+The policy example is installed at
+`$(brew --prefix dutis)/share/dutis/dutis.policy.example.toml`.
+
+To make it discoverable by Codex, link it into your personal skills directory:
+
+```bash
+mkdir -p ~/.codex/skills
+ln -s "$(brew --prefix dutis)/share/dutis/skills/dutis" ~/.codex/skills/dutis
+```
+
 ## What This Does
 
 When you install `dutis` via Homebrew:

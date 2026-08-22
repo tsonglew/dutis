@@ -34,6 +34,9 @@ The server advertises these read tools:
 - `dutis_diff`: parse inline versioned TOML and return a deterministic plan.
 - `dutis_history`: list local safety snapshots.
 - `dutis_rollback_plan`: preview a snapshot rollback and return its digest.
+- `dutis_policy`: inspect the effective mutation policy.
+- `dutis_policy_check`: evaluate an inline TOML plan against policy.
+- `dutis_audit`: inspect persistent mutation audit records.
 
 `dutis_diff` accepts `config_toml` rather than a filesystem path. This keeps the
 MCP surface independent from unrestricted file access and makes the exact input
@@ -73,6 +76,11 @@ Every write call must include both the approval token and the digest returned by
 a fresh `dutis_diff` or `dutis_rollback_plan` call. Dutis rebuilds the plan from
 current system state. A changed digest, unresolved selector, missing token, or
 disabled write mode rejects the request before invoking `duti`.
+
+Write calls also require a non-empty `requester`. The identity, full plan,
+policy digest, safety snapshot, result, and verification are stored in the
+persistent audit record described in the
+[policy and audit guide](policy-and-audit.md).
 
 Do not commit approval tokens to a repository or pass them as command-line
 arguments. Rotate a token if it has been disclosed.
