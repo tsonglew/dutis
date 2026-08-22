@@ -1,4 +1,5 @@
 use crate::application::{resolve_app, Application};
+use crate::association::{AssociationKind, AssociationTarget, HandlerRole};
 use crate::config::DutisConfig;
 use crate::system::DefaultApplication;
 use anyhow::Result;
@@ -6,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
-pub const PLAN_SCHEMA_VERSION: u32 = 1;
+pub const PLAN_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -35,6 +36,11 @@ impl PlannedApplication {
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PlanEntry {
+    #[serde(default)]
+    pub kind: AssociationKind,
+    #[serde(default)]
+    pub role: HandlerRole,
+    /// Normalized identifier. The legacy field name preserves JSON compatibility.
     pub extension: String,
     pub selector: String,
     pub current: Option<DefaultApplication>,
@@ -42,6 +48,16 @@ pub struct PlanEntry {
     pub action: PlanAction,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+}
+
+impl PlanEntry {
+    pub fn association(&self) -> AssociationTarget {
+        AssociationTarget {
+            kind: self.kind,
+            identifier: self.extension.clone(),
+            role: self.role,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -77,6 +93,10 @@ pub enum ApplyStatus {
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ApplyEntryResult {
+    #[serde(default)]
+    pub kind: AssociationKind,
+    #[serde(default)]
+    pub role: HandlerRole,
     pub extension: String,
     pub bundle_id: Option<String>,
     pub status: ApplyStatus,
@@ -99,19 +119,20 @@ pub fn build_plan<F>(
     mut query_default: F,
 ) -> Result<AssociationPlan>
 where
-    F: FnMut(&str) -> Result<Option<DefaultApplication>>,
+    F: FnMut(&AssociationTarget) -> Result<Option<DefaultApplication>>,
 {
-    let mut entries = Vec::with_capacity(config.associations.len());
-    for (extension, selector) in &config.associations {
+    let rules = config.rules()?;
+    let mut entries = Vec::with_capacity(rules.len());
+    for (association, selector) in rules {
         let matches = resolve_app(applications, selector);
         let entry = match matches.as_slice() {
             [] => unresolved_entry(
-                extension,
+                &association,
                 selector,
                 format!("no installed application matches '{selector}'"),
             ),
             [application] if application.bundle_id.is_none() => unresolved_entry(
-                extension,
+                &association,
                 selector,
                 format!(
                     "{} has no readable bundle identifier",
@@ -119,7 +140,7 @@ where
                 ),
             ),
             [application] => {
-                let current = query_default(extension)?;
+                let current = query_default(&association)?;
                 let action = if current.as_ref().map(|app| app.bundle_id.as_str())
                     == application.bundle_id.as_deref()
                 {
@@ -128,8 +149,10 @@ where
                     PlanAction::Change
                 };
                 PlanEntry {
-                    extension: extension.clone(),
-                    selector: selector.clone(),
+                    kind: association.kind,
+                    role: association.role,
+                    extension: association.identifier.clone(),
+                    selector: selector.to_owned(),
                     current,
                     target: PlannedApplication::from_application(application),
                     action,
@@ -137,7 +160,7 @@ where
                 }
             }
             matches => unresolved_entry(
-                extension,
+                &association,
                 selector,
                 format!(
                     "selector is ambiguous: {}",
@@ -169,18 +192,22 @@ pub fn assemble_plan(config_version: u32, entries: Vec<PlanEntry>) -> Result<Ass
 
 pub fn apply_plan<F>(plan: &AssociationPlan, mut apply: F) -> ApplyReport
 where
-    F: FnMut(&str, &str) -> Result<()>,
+    F: FnMut(&AssociationTarget, &str) -> Result<()>,
 {
     let mut results = Vec::with_capacity(plan.entries.len());
     for entry in &plan.entries {
         let result = match entry.action {
             PlanAction::Unchanged => ApplyEntryResult {
+                kind: entry.kind,
+                role: entry.role,
                 extension: entry.extension.clone(),
                 bundle_id: entry.target.as_ref().map(|target| target.bundle_id.clone()),
                 status: ApplyStatus::Skipped,
                 error: None,
             },
             PlanAction::Unresolved => ApplyEntryResult {
+                kind: entry.kind,
+                role: entry.role,
                 extension: entry.extension.clone(),
                 bundle_id: None,
                 status: ApplyStatus::Failed,
@@ -192,14 +219,18 @@ where
                     .as_ref()
                     .map(|target| target.bundle_id.as_str())
                     .expect("resolved plan entries have bundle IDs");
-                match apply(&entry.extension, bundle_id) {
+                match apply(&entry.association(), bundle_id) {
                     Ok(()) => ApplyEntryResult {
+                        kind: entry.kind,
+                        role: entry.role,
                         extension: entry.extension.clone(),
                         bundle_id: Some(bundle_id.to_owned()),
                         status: ApplyStatus::Applied,
                         error: None,
                     },
                     Err(error) => ApplyEntryResult {
+                        kind: entry.kind,
+                        role: entry.role,
                         extension: entry.extension.clone(),
                         bundle_id: Some(bundle_id.to_owned()),
                         status: ApplyStatus::Failed,
@@ -229,9 +260,11 @@ where
     }
 }
 
-fn unresolved_entry(extension: &str, selector: &str, reason: String) -> PlanEntry {
+fn unresolved_entry(association: &AssociationTarget, selector: &str, reason: String) -> PlanEntry {
     PlanEntry {
-        extension: extension.to_owned(),
+        kind: association.kind,
+        role: association.role,
+        extension: association.identifier.clone(),
         selector: selector.to_owned(),
         current: None,
         target: None,
@@ -267,6 +300,8 @@ struct DigestMaterial<'a> {
 
 #[derive(Serialize)]
 struct DigestEntry<'a> {
+    kind: AssociationKind,
+    role: HandlerRole,
     extension: &'a str,
     selector: &'a str,
     current_bundle_id: Option<&'a str>,
@@ -283,6 +318,8 @@ fn calculate_digest(config_version: u32, entries: &[PlanEntry]) -> Result<String
         entries: entries
             .iter()
             .map(|entry| DigestEntry {
+                kind: entry.kind,
+                role: entry.role,
                 extension: &entry.extension,
                 selector: &entry.selector,
                 current_bundle_id: entry.current.as_ref().map(|app| app.bundle_id.as_str()),
@@ -304,6 +341,7 @@ fn calculate_digest(config_version: u32, entries: &[PlanEntry]) -> Result<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::AssociationRule;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
@@ -323,11 +361,14 @@ mod tests {
                 .iter()
                 .map(|(extension, selector)| ((*extension).to_owned(), (*selector).to_owned()))
                 .collect::<BTreeMap<_, _>>(),
+            handlers: Vec::new(),
         }
     }
 
     fn current(extension: &str, bundle_id: &str) -> DefaultApplication {
         DefaultApplication {
+            kind: AssociationKind::Extension,
+            role: HandlerRole::All,
             extension: extension.to_owned(),
             name: None,
             path: None,
@@ -340,11 +381,11 @@ mod tests {
         let applications = vec![app("Editor", "com.example.Editor")];
         let config = config(&[("json", "Editor"), ("md", "com.example.Editor")]);
         let build = || {
-            build_plan(&config, &applications, |extension| {
-                Ok(Some(if extension == "md" {
-                    current(extension, "com.example.Editor")
+            build_plan(&config, &applications, |association| {
+                Ok(Some(if association.identifier == "md" {
+                    current(&association.identifier, "com.example.Editor")
                 } else {
-                    current(extension, "com.example.Other")
+                    current(&association.identifier, "com.example.Other")
                 }))
             })
             .unwrap()
@@ -365,8 +406,8 @@ mod tests {
         let applications = vec![app("Editor", "com.example.Editor")];
         let config = config(&[("md", "Editor")]);
         let missing = build_plan(&config, &applications, |_| Ok(None)).unwrap();
-        let converged = build_plan(&config, &applications, |extension| {
-            Ok(Some(current(extension, "com.example.Editor")))
+        let converged = build_plan(&config, &applications, |association| {
+            Ok(Some(current(&association.identifier, "com.example.Editor")))
         })
         .unwrap();
         assert_ne!(missing.digest, converged.digest);
@@ -392,8 +433,8 @@ mod tests {
         let applications = vec![app("Editor", "com.example.Editor")];
         let config = config(&[("json", "Editor"), ("md", "Editor")]);
         let plan = build_plan(&config, &applications, |_| Ok(None)).unwrap();
-        let report = apply_plan(&plan, |extension, _| {
-            if extension == "json" {
+        let report = apply_plan(&plan, |association, _| {
+            if association.identifier == "json" {
                 anyhow::bail!("simulated failure");
             }
             Ok(())
@@ -407,13 +448,47 @@ mod tests {
     fn converged_apply_is_idempotent() {
         let applications = vec![app("Editor", "com.example.Editor")];
         let config = config(&[("md", "Editor")]);
-        let plan = build_plan(&config, &applications, |extension| {
-            Ok(Some(current(extension, "com.example.Editor")))
+        let plan = build_plan(&config, &applications, |association| {
+            Ok(Some(current(&association.identifier, "com.example.Editor")))
         })
         .unwrap();
         let report = apply_plan(&plan, |_, _| panic!("unchanged entry was applied"));
         assert_eq!(report.applied, 0);
         assert_eq!(report.skipped, 1);
         assert_eq!(report.failed, 0);
+    }
+
+    #[test]
+    fn builds_one_deterministic_plan_across_association_kinds_and_roles() {
+        let applications = vec![app("Editor", "com.example.Editor")];
+        let config = DutisConfig {
+            version: 2,
+            associations: BTreeMap::new(),
+            handlers: vec![
+                AssociationRule {
+                    kind: AssociationKind::UrlScheme,
+                    identifier: "https".to_owned(),
+                    role: HandlerRole::All,
+                    application: "com.example.Editor".to_owned(),
+                },
+                AssociationRule {
+                    kind: AssociationKind::Uti,
+                    identifier: "public.html".to_owned(),
+                    role: HandlerRole::Viewer,
+                    application: "com.example.Editor".to_owned(),
+                },
+            ],
+        };
+        let plan = build_plan(&config, &applications, |_| Ok(None)).unwrap();
+        assert_eq!(plan.schema_version, 2);
+        assert_eq!(plan.entries[0].kind, AssociationKind::Uti);
+        assert_eq!(plan.entries[0].role, HandlerRole::Viewer);
+        assert_eq!(plan.entries[1].kind, AssociationKind::UrlScheme);
+        assert_eq!(plan.summary.changes, 2);
+
+        let mut editor_config = config;
+        editor_config.handlers[1].role = HandlerRole::Editor;
+        let editor_plan = build_plan(&editor_config, &applications, |_| Ok(None)).unwrap();
+        assert_ne!(plan.digest, editor_plan.digest);
     }
 }

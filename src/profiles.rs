@@ -1,4 +1,5 @@
 use crate::application::Application;
+use crate::association::{AssociationKind, HandlerRole};
 use crate::config::{DutisConfig, CONFIG_VERSION};
 use crate::planner::{assemble_plan, AssociationPlan, PlanAction, PlanEntry, PlannedApplication};
 use crate::system::DefaultApplication;
@@ -183,6 +184,8 @@ where
                 selected.bundle_id.to_owned(),
             );
             plan_entries.push(PlanEntry {
+                kind: AssociationKind::Extension,
+                role: HandlerRole::All,
                 extension: association.extension.to_owned(),
                 selector: selected.bundle_id.to_owned(),
                 current: current.clone(),
@@ -219,6 +222,7 @@ where
     let proposed_config = DutisConfig {
         version: CONFIG_VERSION,
         associations: proposed_associations,
+        handlers: Vec::new(),
     };
     let proposed_toml = toml::to_string_pretty(&proposed_config)?;
     let plan = assemble_plan(CONFIG_VERSION, plan_entries)?;
@@ -495,6 +499,8 @@ mod tests {
         ];
         let recommendation = recommend_profile(&profile, &applications, |extension| {
             Ok(Some(DefaultApplication {
+                kind: AssociationKind::Extension,
+                role: HandlerRole::All,
                 extension: extension.to_owned(),
                 name: Some("Current".to_owned()),
                 path: Some("/Applications/Current.app".to_owned()),

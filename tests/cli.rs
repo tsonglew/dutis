@@ -138,6 +138,210 @@ fn unknown_profile_has_stable_json_error() {
     assert_eq!(response["error"]["kind"], "not_found");
 }
 
+#[cfg(unix)]
+#[test]
+fn typed_handler_get_uses_duti_default_handler_query() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root =
+        std::env::temp_dir().join(format!("dutis-handler-get-{}-{unique}", std::process::id()));
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let duti = bin.join("duti");
+    fs::write(
+        &duti,
+        concat!(
+            "#!/bin/sh\n",
+            "printf '%s\\n' \"$*\" >> \"$DUTI_CALL_LOG\"\n",
+            "if [ \"$1\" = \"-V\" ]; then printf 'test-duti\\n'; exit 0; fi\n",
+            "if [ \"$1\" = \"-d\" ]; then printf 'com.example.Browser\\n'; exit 0; fi\n",
+            "exit 99\n",
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&duti, fs::Permissions::from_mode(0o700)).unwrap();
+    let calls = root.join("duti-calls.log");
+    let output = dutis()
+        .env("PATH", &bin)
+        .env("DUTI_CALL_LOG", &calls)
+        .args([
+            "handler",
+            "get",
+            "uti",
+            "Public.HTML",
+            "--role",
+            "viewer",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["data"]["kind"], "uti");
+    assert_eq!(response["data"]["role"], "viewer");
+    assert_eq!(response["data"]["extension"], "public.html");
+    assert_eq!(response["data"]["bundle_id"], "com.example.Browser");
+    let calls = fs::read_to_string(&calls).unwrap();
+    assert_eq!(calls.lines().collect::<Vec<_>>(), ["-V", "-d public.html"]);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn url_scheme_rejects_document_roles_before_querying_duti() {
+    let output = dutis()
+        .args([
+            "handler",
+            "get",
+            "url-scheme",
+            "https",
+            "--role",
+            "viewer",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["error"]["kind"], "usage");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn typed_config_dry_run_and_apply_cover_every_duti_argument_shape() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root =
+        std::env::temp_dir().join(format!("dutis-typed-apply-{}-{unique}", std::process::id()));
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let duti = bin.join("duti");
+    fs::write(
+        &duti,
+        concat!(
+            "#!/bin/sh\n",
+            "printf '%s\\n' \"$*\" >> \"$DUTI_CALL_LOG\"\n",
+            "if [ \"$1\" = \"-V\" ]; then printf 'test-duti\\n'; exit 0; fi\n",
+            "if [ \"$1\" = \"-s\" ]; then : > \"$DUTI_FAKE_STATE\"; exit 0; fi\n",
+            "if [ \"$1\" = \"-x\" ] && [ -f \"$DUTI_FAKE_STATE\" ]; then printf 'TextEdit\\n/System/Applications/TextEdit.app\\ncom.apple.TextEdit\\n'; exit 0; fi\n",
+            "if [ \"$1\" = \"-x\" ]; then printf 'Other\\n/Applications/Other.app\\ncom.example.Other\\n'; exit 0; fi\n",
+            "if [ \"$1\" = \"-d\" ] && [ -f \"$DUTI_FAKE_STATE\" ]; then printf 'com.apple.TextEdit\\n'; exit 0; fi\n",
+            "if [ \"$1\" = \"-d\" ]; then printf 'com.example.Other\\n'; exit 0; fi\n",
+            "exit 99\n",
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&duti, fs::Permissions::from_mode(0o700)).unwrap();
+    let config = root.join("dutis.toml");
+    fs::write(
+        &config,
+        concat!(
+            "version = 2\n",
+            "[associations]\n",
+            "md = 'com.apple.TextEdit'\n",
+            "[[handlers]]\n",
+            "kind = 'uti'\n",
+            "identifier = 'public.plain-text'\n",
+            "role = 'viewer'\n",
+            "application = 'com.apple.TextEdit'\n",
+            "[[handlers]]\n",
+            "kind = 'mime'\n",
+            "identifier = 'text/plain'\n",
+            "role = 'editor'\n",
+            "application = 'com.apple.TextEdit'\n",
+            "[[handlers]]\n",
+            "kind = 'url_scheme'\n",
+            "identifier = 'https'\n",
+            "application = 'com.apple.TextEdit'\n",
+        ),
+    )
+    .unwrap();
+    let calls = root.join("duti-calls.log");
+    let fake_state = root.join("applied");
+    let state = root.join("state");
+    let configure = |command: &mut Command| {
+        command
+            .env("PATH", &bin)
+            .env("DUTI_CALL_LOG", &calls)
+            .env("DUTI_FAKE_STATE", &fake_state)
+            .env("DUTIS_STATE_DIR", &state);
+    };
+
+    let mut plan_command = dutis();
+    configure(&mut plan_command);
+    let plan_output = plan_command
+        .args(["plan", config.to_str().unwrap(), "--json"])
+        .output()
+        .unwrap();
+    assert!(plan_output.status.success());
+    let plan: Value = serde_json::from_slice(&plan_output.stdout).unwrap();
+    assert_eq!(plan["data"]["schema_version"], 2);
+    assert_eq!(plan["data"]["summary"]["changes"], 4);
+    let digest = plan["data"]["digest"].as_str().unwrap();
+
+    fs::write(&calls, "").unwrap();
+    let mut dry_run_command = dutis();
+    configure(&mut dry_run_command);
+    let dry_run = dry_run_command
+        .args(["apply", config.to_str().unwrap(), "--dry-run", "--json"])
+        .output()
+        .unwrap();
+    assert!(dry_run.status.success());
+    assert!(!fs::read_to_string(&calls)
+        .unwrap()
+        .lines()
+        .any(|line| line.starts_with("-s ")));
+
+    fs::write(&calls, "").unwrap();
+    let mut apply_command = dutis();
+    configure(&mut apply_command);
+    let apply = apply_command
+        .args([
+            "apply",
+            config.to_str().unwrap(),
+            "--plan-digest",
+            digest,
+            "--requester",
+            "integration-test",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        apply.status.success(),
+        "{}",
+        String::from_utf8_lossy(&apply.stderr)
+    );
+    let response: Value = serde_json::from_slice(&apply.stdout).unwrap();
+    assert_eq!(response["data"]["applied"], 4);
+    assert!(response["data"]["safety_snapshot_id"].is_string());
+    assert!(response["data"]["audit_id"].is_string());
+    let calls = fs::read_to_string(&calls).unwrap();
+    assert!(calls
+        .lines()
+        .any(|line| line == "-s com.apple.TextEdit .md all"));
+    assert!(calls
+        .lines()
+        .any(|line| line == "-s com.apple.TextEdit public.plain-text viewer"));
+    assert!(calls
+        .lines()
+        .any(|line| line == "-s com.apple.TextEdit text/plain editor"));
+    assert!(calls
+        .lines()
+        .any(|line| line == "-s com.apple.TextEdit https"));
+    assert_eq!(fs::read_dir(state.join("snapshots")).unwrap().count(), 1);
+    assert_eq!(fs::read_dir(state.join("audit")).unwrap().count(), 1);
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn watch_remediation_requires_explicit_approval_before_reading_config() {
     let output = dutis()

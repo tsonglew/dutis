@@ -1,29 +1,69 @@
 # Declarative configuration
 
-Dutis v2.6 adds a versioned TOML configuration and a reviewable
-`plan -> apply -> verify` workflow for scripts and AI agents.
+Dutis uses a versioned TOML configuration and a reviewable
+`plan -> apply -> verify` workflow for scripts and AI agents. Version 2 extends
+the same pipeline from filename extensions to UTIs, MIME types, URL schemes,
+and Launch Services roles.
 
-## Schema version 1
+## Schema version 2
 
 ```toml
-version = 1
+version = 2
 
+# The compact version 1 extension syntax remains supported.
 [associations]
 md = "com.microsoft.VSCode"
 json = "/Applications/Visual Studio Code.app"
 txt = "TextEdit"
+
+[[handlers]]
+kind = "uti"
+identifier = "public.plain-text"
+role = "viewer"
+application = "com.apple.TextEdit"
+
+[[handlers]]
+kind = "mime"
+identifier = "text/plain"
+role = "editor"
+application = "com.apple.TextEdit"
+
+[[handlers]]
+kind = "url_scheme"
+identifier = "https"
+application = "com.apple.Safari"
 ```
 
 Association keys are filename extensions. A leading dot and uppercase letters
-are accepted and normalized. Each value must resolve to exactly one installed
-application using, in priority order:
+are accepted and normalized. Typed `[[handlers]]` entries accept these `kind`
+values:
+
+| Kind | Example identifier | Roles |
+| --- | --- | --- |
+| `extension` | `md` | `all`, `viewer`, `editor`, `shell` |
+| `uti` | `public.plain-text` | `all`, `viewer`, `editor`, `shell` |
+| `mime` | `text/plain` | `all`, `viewer`, `editor`, `shell` |
+| `url_scheme` | `https` | `all` only |
+
+The role defaults to `all`. URL schemes reject document-specific roles because
+`duti` does not accept a role for URL-scheme registration. Each `application`
+or compact association value must resolve to exactly one installed application
+using, in priority order:
 
 1. Exact application path.
 2. Exact bundle identifier.
 3. Case-insensitive, unambiguous application name.
 
-Unknown fields, unsupported schema versions, invalid extensions, empty
-selectors, and duplicate normalized extensions are rejected.
+Unknown fields, unsupported schema versions, invalid identifiers, invalid
+kind/role combinations, empty selectors, and duplicate normalized targets are
+rejected.
+
+For one-off typed inspection or mutation, use:
+
+```bash
+dutis handler get uti public.html --role viewer --json
+dutis handler set mime text/plain com.apple.TextEdit --role editor --dry-run
+```
 
 ## Review and apply
 
@@ -77,11 +117,16 @@ code `9` and no association is changed. See
 
 ## Versioning and migration
 
-- `version` is the configuration schema version and is currently `1`.
-- `schema_version` in plan JSON is currently `1`.
+- `version` is the configuration schema version and is currently `2`.
+- Configuration version `1` remains accepted for legacy `[associations]` files.
+  Typed `[[handlers]]` require version `2`.
+- `schema_version` in plan JSON is currently `2`.
 - `api_version` in the CLI JSON envelope remains `1`.
 - Unknown configuration fields are rejected so misspellings cannot silently
   change policy.
+- Existing serialized plan, result, and snapshot objects retain the legacy
+  `extension` field as the normalized identifier. The accompanying `kind` and
+  `role` fields identify its meaning.
 - A future incompatible schema will use a new configuration version and include
   explicit migration documentation. Dutis never silently upgrades a file.
 

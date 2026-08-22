@@ -159,13 +159,28 @@ Acceptance criteria:
 
 ## Phase 8: Broader association support
 
+Status: implemented for v2.12.0
+
 Expand the model beyond filename extensions to URL schemes, UTIs, MIME types,
 and Launch Services roles. Preserve one normalized planning and verification
 pipeline across all association types.
 
+Acceptance criteria:
+
+- Configuration schema version 2 accepts extension, UTI, MIME, and URL-scheme
+  targets while version 1 extension configurations remain compatible.
+- CLI and MCP expose typed read operations; declarative diff/apply supports all
+  types through the existing digest, policy, snapshot, audit, and verification
+  boundary.
+- Policies can allow kinds and protect a kind/identifier/role tuple.
+- URL schemes reject document roles and use the role-free `duti` invocation.
+- Unit and fake-`duti` integration tests cover normalization, planning, dry-run,
+  mutation arguments, snapshotting, auditing, and verification.
+
 ## Near-term engineering sequence
 
-1. Release Phase 7 and validate long-running LaunchAgent behavior across Intel
-   and Apple Silicon Macs.
-2. Expand normalized planning to URL schemes, UTIs, and MIME types.
-3. Add richer event sinks after the normalized association model is stable.
+1. Release Phase 8 and validate typed association read-back on supported macOS
+   releases and both CPU architectures.
+2. Add richer event sinks for drift and mutation events.
+3. Extend application metadata discovery beyond filename extensions where
+   Launch Services exposes reliable declarations.

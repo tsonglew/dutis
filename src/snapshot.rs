@@ -1,4 +1,5 @@
 use crate::application::{normalize_extension, resolve_app, Application};
+use crate::association::{AssociationKind, AssociationTarget, HandlerRole};
 use crate::planner::{
     apply_plan, assemble_plan, ApplyReport, AssociationPlan, PlanAction, PlanEntry,
     PlannedApplication,
@@ -27,6 +28,11 @@ pub enum SnapshotReason {
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SnapshotAssociation {
+    #[serde(default)]
+    pub kind: AssociationKind,
+    #[serde(default)]
+    pub role: HandlerRole,
+    /// Normalized identifier. The legacy field name preserves snapshot compatibility.
     pub extension: String,
     pub default: Option<DefaultApplication>,
 }
@@ -213,7 +219,32 @@ where
         .into_iter()
         .map(|extension| {
             let default = query(&extension)?;
-            Ok(SnapshotAssociation { extension, default })
+            Ok(SnapshotAssociation {
+                kind: AssociationKind::Extension,
+                role: HandlerRole::All,
+                extension,
+                default,
+            })
+        })
+        .collect()
+}
+
+pub fn capture_targets<F, I>(targets: I, mut query: F) -> Result<Vec<SnapshotAssociation>>
+where
+    I: IntoIterator<Item = AssociationTarget>,
+    F: FnMut(&AssociationTarget) -> Result<Option<DefaultApplication>>,
+{
+    let normalized = targets.into_iter().collect::<BTreeSet<_>>();
+    normalized
+        .into_iter()
+        .map(|target| {
+            let default = query(&target)?;
+            Ok(SnapshotAssociation {
+                kind: target.kind,
+                role: target.role,
+                extension: target.identifier,
+                default,
+            })
         })
         .collect()
 }
@@ -222,6 +253,8 @@ pub fn associations_from_plan(plan: &AssociationPlan) -> Vec<SnapshotAssociation
     plan.entries
         .iter()
         .map(|entry| SnapshotAssociation {
+            kind: entry.kind,
+            role: entry.role,
             extension: entry.extension.clone(),
             default: entry.current.clone(),
         })
@@ -235,7 +268,7 @@ pub fn apply_plan_with_snapshot<F>(
     apply: F,
 ) -> Result<ProtectedApply>
 where
-    F: FnMut(&str, &str) -> Result<()>,
+    F: FnMut(&AssociationTarget, &str) -> Result<()>,
 {
     let safety_snapshot = if plan.summary.changes > 0 {
         Some(store.create(
@@ -259,14 +292,18 @@ pub fn build_rollback_plan<F>(
     mut query_default: F,
 ) -> Result<AssociationPlan>
 where
-    F: FnMut(&str) -> Result<Option<DefaultApplication>>,
+    F: FnMut(&AssociationTarget) -> Result<Option<DefaultApplication>>,
 {
     validate_snapshot(snapshot, None)?;
     let mut entries = Vec::with_capacity(snapshot.associations.len());
     for association in &snapshot.associations {
-        let current = query_default(&association.extension)?;
+        let target =
+            AssociationTarget::new(association.kind, &association.extension, association.role)?;
+        let current = query_default(&target)?;
         let entry = match &association.default {
             None if current.is_none() => PlanEntry {
+                kind: association.kind,
+                role: association.role,
                 extension: association.extension.clone(),
                 selector: "<no default>".to_owned(),
                 current,
@@ -275,6 +312,8 @@ where
                 reason: None,
             },
             None => PlanEntry {
+                kind: association.kind,
+                role: association.role,
                 extension: association.extension.clone(),
                 selector: "<no default>".to_owned(),
                 current,
@@ -297,6 +336,8 @@ where
                             PlanAction::Change
                         };
                         PlanEntry {
+                            kind: association.kind,
+                            role: association.role,
                             extension: association.extension.clone(),
                             selector: previous.bundle_id.clone(),
                             current,
@@ -306,6 +347,8 @@ where
                         }
                     }
                     [] => PlanEntry {
+                        kind: association.kind,
+                        role: association.role,
                         extension: association.extension.clone(),
                         selector: previous.bundle_id.clone(),
                         current,
@@ -317,6 +360,8 @@ where
                         )),
                     },
                     matches => PlanEntry {
+                        kind: association.kind,
+                        role: association.role,
                         extension: association.extension.clone(),
                         selector: previous.bundle_id.clone(),
                         current,
@@ -345,8 +390,12 @@ fn normalize_associations(
     let mut normalized = associations
         .into_iter()
         .map(|association| {
+            let target =
+                AssociationTarget::new(association.kind, &association.extension, association.role)?;
             Ok(SnapshotAssociation {
-                extension: normalize_extension(&association.extension)?,
+                kind: target.kind,
+                role: target.role,
+                extension: target.identifier,
                 default: association.default,
             })
         })
@@ -405,6 +454,8 @@ mod tests {
 
     fn default(extension: &str, bundle_id: &str) -> DefaultApplication {
         DefaultApplication {
+            kind: AssociationKind::Extension,
+            role: HandlerRole::All,
             extension: extension.to_owned(),
             name: None,
             path: None,
@@ -429,6 +480,8 @@ mod tests {
                 SnapshotReason::Manual,
                 None,
                 vec![SnapshotAssociation {
+                    kind: AssociationKind::Extension,
+                    role: HandlerRole::All,
                     extension: ".MD".to_owned(),
                     default: Some(default("md", "com.example.Editor")),
                 }],
@@ -473,6 +526,41 @@ mod tests {
     }
 
     #[test]
+    fn captures_and_restores_typed_targets_with_roles() {
+        let target =
+            AssociationTarget::new(AssociationKind::Uti, "public.html", HandlerRole::Viewer)
+                .unwrap();
+        let associations = capture_targets([target.clone()], |value| {
+            Ok(Some(DefaultApplication {
+                kind: value.kind,
+                role: value.role,
+                extension: value.identifier.clone(),
+                name: None,
+                path: None,
+                bundle_id: "com.example.Editor".to_owned(),
+            }))
+        })
+        .unwrap();
+        assert_eq!(associations[0].kind, AssociationKind::Uti);
+        assert_eq!(associations[0].role, HandlerRole::Viewer);
+
+        let snapshot = Snapshot {
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            id: "typed-snapshot".to_owned(),
+            created_at: "2026-08-22T00:00:00Z".to_owned(),
+            reason: SnapshotReason::Manual,
+            source_plan_digest: None,
+            associations,
+        };
+        let plan = build_rollback_plan(&snapshot, &[application("com.example.Editor")], |_| {
+            Ok(None)
+        })
+        .unwrap();
+        assert_eq!(plan.entries[0].kind, AssociationKind::Uti);
+        assert_eq!(plan.entries[0].role, HandlerRole::Viewer);
+    }
+
+    #[test]
     fn builds_verified_rollback_plan() {
         let store = temporary_store();
         let snapshot = store
@@ -480,13 +568,15 @@ mod tests {
                 SnapshotReason::BeforeApply,
                 Some("source-plan".to_owned()),
                 vec![SnapshotAssociation {
+                    kind: AssociationKind::Extension,
+                    role: HandlerRole::All,
                     extension: "md".to_owned(),
                     default: Some(default("md", "com.example.Editor")),
                 }],
             )
             .unwrap();
-        let plan = build_rollback_plan(&snapshot, &[application("com.example.Editor")], |ext| {
-            Ok(Some(default(ext, "com.example.Other")))
+        let plan = build_rollback_plan(&snapshot, &[application("com.example.Editor")], |target| {
+            Ok(Some(default(&target.identifier, "com.example.Other")))
         })
         .unwrap();
         assert_eq!(plan.summary.changes, 1);
@@ -502,13 +592,15 @@ mod tests {
                 SnapshotReason::Manual,
                 None,
                 vec![SnapshotAssociation {
+                    kind: AssociationKind::Extension,
+                    role: HandlerRole::All,
                     extension: "md".to_owned(),
                     default: None,
                 }],
             )
             .unwrap();
-        let plan = build_rollback_plan(&snapshot, &[], |ext| {
-            Ok(Some(default(ext, "com.example.Current")))
+        let plan = build_rollback_plan(&snapshot, &[], |target| {
+            Ok(Some(default(&target.identifier, "com.example.Current")))
         })
         .unwrap();
         assert_eq!(plan.summary.unresolved, 1);
@@ -524,13 +616,15 @@ mod tests {
                 SnapshotReason::Manual,
                 None,
                 vec![SnapshotAssociation {
+                    kind: AssociationKind::Extension,
+                    role: HandlerRole::All,
                     extension: "md".to_owned(),
                     default: Some(default("md", "com.example.Editor")),
                 }],
             )
             .unwrap();
-        let plan = build_rollback_plan(&snapshot, &[application("com.example.Editor")], |ext| {
-            Ok(Some(default(ext, "com.example.Other")))
+        let plan = build_rollback_plan(&snapshot, &[application("com.example.Editor")], |target| {
+            Ok(Some(default(&target.identifier, "com.example.Other")))
         })
         .unwrap();
         let protected =
@@ -562,12 +656,14 @@ mod tests {
             reason: SnapshotReason::Manual,
             source_plan_digest: None,
             associations: vec![SnapshotAssociation {
+                kind: AssociationKind::Extension,
+                role: HandlerRole::All,
                 extension: "md".to_owned(),
                 default: Some(default("md", "com.example.Editor")),
             }],
         };
-        let plan = build_rollback_plan(&snapshot, &[application("com.example.Editor")], |ext| {
-            Ok(Some(default(ext, "com.example.Other")))
+        let plan = build_rollback_plan(&snapshot, &[application("com.example.Editor")], |target| {
+            Ok(Some(default(&target.identifier, "com.example.Other")))
         })
         .unwrap();
         let result =

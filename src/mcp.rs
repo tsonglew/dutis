@@ -1,4 +1,5 @@
 use crate::application::{find_apps_for_extension, normalize_extension, ApplicationCatalog};
+use crate::association::{AssociationKind, AssociationTarget, HandlerRole};
 use crate::config::DutisConfig;
 use crate::drift::DriftReport;
 use crate::governance::{
@@ -83,6 +84,7 @@ trait McpBackend {
     fn drift(&mut self, config: &DutisConfig) -> Result<Value>;
     fn query(&mut self, extension: &str) -> Result<Value>;
     fn get(&mut self, extension: &str) -> Result<Value>;
+    fn get_handler(&mut self, association: &AssociationTarget) -> Result<Value>;
     fn plan(&mut self, config: &DutisConfig) -> Result<AssociationPlan>;
     fn apply(
         &mut self,
@@ -135,7 +137,7 @@ impl McpBackend for SystemBackend {
     fn drift(&mut self, config: &DutisConfig) -> Result<Value> {
         system::duti_version()?;
         let catalog = ApplicationCatalog::scan()?;
-        let plan = build_plan(config, &catalog.applications, system::query_default_app)?;
+        let plan = build_plan(config, &catalog.applications, system::query_default_handler)?;
         let policy = LoadedPolicy::from_environment()?;
         let assessment = policy.policy.assess(&plan);
         serde_json::to_value(DriftReport::new(plan, policy.summary(), assessment)?)
@@ -157,10 +159,15 @@ impl McpBackend for SystemBackend {
         Ok(json!({"extension": extension, "default": default}))
     }
 
+    fn get_handler(&mut self, association: &AssociationTarget) -> Result<Value> {
+        let default = system::get_default_handler(association)?;
+        Ok(json!({"association": association, "default": default}))
+    }
+
     fn plan(&mut self, config: &DutisConfig) -> Result<AssociationPlan> {
         system::duti_version()?;
         let catalog = ApplicationCatalog::scan()?;
-        build_plan(config, &catalog.applications, system::query_default_app)
+        build_plan(config, &catalog.applications, system::query_default_handler)
     }
 
     fn apply(
@@ -169,7 +176,7 @@ impl McpBackend for SystemBackend {
         reason: SnapshotReason,
         request: &MutationRequest,
     ) -> Result<Value> {
-        let result = execute_governed_plan(plan, reason, request, system::set_default_app)
+        let result = execute_governed_plan(plan, reason, request, system::set_default_handler)
             .map_err(anyhow::Error::from)?;
         serde_json::to_value(result).context("failed to serialize mutation result")
     }
@@ -184,7 +191,11 @@ impl McpBackend for SystemBackend {
         let snapshot = store.load(snapshot_id)?;
         system::duti_version()?;
         let catalog = ApplicationCatalog::scan()?;
-        build_rollback_plan(&snapshot, &catalog.applications, system::query_default_app)
+        build_rollback_plan(
+            &snapshot,
+            &catalog.applications,
+            system::query_default_handler,
+        )
     }
 
     fn policy(&mut self) -> Result<Value> {
@@ -364,6 +375,12 @@ impl<B: McpBackend> McpServer<B> {
                     .map_err(|error| ToolError::new("invalid_arguments", error.to_string()))?;
                 self.backend.get(&extension).map_err(operation_error)
             }
+            "dutis_handler_get" => {
+                let association = parse_association(arguments)?;
+                self.backend
+                    .get_handler(&association)
+                    .map_err(operation_error)
+            }
             "dutis_diff" => {
                 let config = parse_config(arguments)?;
                 let plan = self.backend.plan(&config).map_err(operation_error)?;
@@ -516,6 +533,41 @@ fn argument_string<'a>(
         })
 }
 
+fn parse_association(
+    arguments: &Map<String, Value>,
+) -> std::result::Result<AssociationTarget, ToolError> {
+    let kind = match argument_string(arguments, "kind")? {
+        "extension" => AssociationKind::Extension,
+        "uti" => AssociationKind::Uti,
+        "mime" => AssociationKind::Mime,
+        "url_scheme" => AssociationKind::UrlScheme,
+        value => {
+            return Err(ToolError::new(
+                "invalid_arguments",
+                format!("unsupported association kind '{value}'"),
+            ))
+        }
+    };
+    let role = match arguments
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("all")
+    {
+        "all" => HandlerRole::All,
+        "viewer" => HandlerRole::Viewer,
+        "editor" => HandlerRole::Editor,
+        "shell" => HandlerRole::Shell,
+        value => {
+            return Err(ToolError::new(
+                "invalid_arguments",
+                format!("unsupported handler role '{value}'"),
+            ))
+        }
+    };
+    AssociationTarget::new(kind, argument_string(arguments, "identifier")?, role)
+        .map_err(|error| ToolError::new("invalid_arguments", error.to_string()))
+}
+
 fn parse_config(arguments: &Map<String, Value>) -> std::result::Result<DutisConfig, ToolError> {
     let contents = argument_string(arguments, "config_toml")?;
     if contents.len() > MAX_CONFIG_BYTES {
@@ -630,6 +682,16 @@ fn tool_definitions(allow_writes: bool) -> Vec<Value> {
         "required": ["extension"],
         "additionalProperties": false,
     });
+    let handler_schema = json!({
+        "type": "object",
+        "properties": {
+            "kind": {"type": "string", "enum": ["extension", "uti", "mime", "url_scheme"]},
+            "identifier": {"type": "string", "minLength": 1},
+            "role": {"type": "string", "enum": ["all", "viewer", "editor", "shell"], "default": "all"}
+        },
+        "required": ["kind", "identifier"],
+        "additionalProperties": false,
+    });
     let config_schema = json!({
         "type": "object",
         "properties": {"config_toml": {"type": "string", "minLength": 1}},
@@ -695,6 +757,12 @@ fn tool_definitions(allow_writes: bool) -> Vec<Value> {
             "dutis_get",
             "Read the current default application for an extension.",
             extension_schema,
+            read_annotations.clone(),
+        ),
+        tool_definition(
+            "dutis_handler_get",
+            "Read the current handler for an extension, UTI, MIME type, or URL scheme.",
+            handler_schema,
             read_annotations.clone(),
         ),
         tool_definition(
@@ -907,6 +975,10 @@ mod tests {
             Ok(json!({"extension": extension, "default": null}))
         }
 
+        fn get_handler(&mut self, association: &AssociationTarget) -> Result<Value> {
+            Ok(json!({"association": association, "default": null}))
+        }
+
         fn plan(&mut self, _config: &DutisConfig) -> Result<AssociationPlan> {
             Ok(self.plan.clone())
         }
@@ -988,6 +1060,7 @@ mod tests {
         assert!(names.contains(&"dutis_profile"));
         assert!(names.contains(&"dutis_recommend"));
         assert!(names.contains(&"dutis_drift"));
+        assert!(names.contains(&"dutis_handler_get"));
         assert!(names.contains(&"dutis_policy_check"));
         assert!(names.contains(&"dutis_audit"));
         assert!(!names.contains(&"dutis_apply"));
@@ -1051,6 +1124,38 @@ mod tests {
             "in_sync"
         );
         assert_eq!(outcome.audit.unwrap().access, "read");
+    }
+
+    #[test]
+    fn typed_handler_get_validates_kind_identifier_and_role() {
+        let mut server = McpServer::new(FakeBackend::new(), McpOptions::read_only());
+        let outcome = server.handle(request(
+            8,
+            "tools/call",
+            json!({
+                "name": "dutis_handler_get",
+                "arguments": {"kind": "uti", "identifier": "public.html", "role": "viewer"}
+            }),
+        ));
+        let response = outcome.response.unwrap();
+        assert_eq!(
+            response["result"]["structuredContent"]["data"]["association"]["kind"],
+            "uti"
+        );
+        assert_eq!(outcome.audit.unwrap().access, "read");
+
+        let invalid = server.handle(request(
+            9,
+            "tools/call",
+            json!({
+                "name": "dutis_handler_get",
+                "arguments": {"kind": "url_scheme", "identifier": "https", "role": "viewer"}
+            }),
+        ));
+        assert_eq!(
+            invalid.response.unwrap()["result"]["structuredContent"]["error"]["kind"],
+            "invalid_arguments"
+        );
     }
 
     #[test]

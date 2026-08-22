@@ -35,6 +35,8 @@ The server advertises these read tools:
 - `dutis_drift`: check inline TOML for drift and return a timestamped report with policy assessment.
 - `dutis_query`: find installed handlers for one extension.
 - `dutis_get`: inspect the current default handler.
+- `dutis_handler_get`: inspect an extension, UTI, MIME type, or URL scheme with
+  an optional `all`, `viewer`, `editor`, or `shell` role.
 - `dutis_diff`: parse inline versioned TOML and return a deterministic plan.
 - `dutis_history`: list local safety snapshots.
 - `dutis_rollback_plan`: preview a snapshot rollback and return its digest.
@@ -42,7 +44,9 @@ The server advertises these read tools:
 - `dutis_policy_check`: evaluate an inline TOML plan against policy.
 - `dutis_audit`: inspect persistent mutation audit records.
 
-`dutis_diff` accepts `config_toml` rather than a filesystem path. This keeps the
+`dutis_handler_get` accepts `kind`, `identifier`, and optional `role` fields.
+The kind uses `url_scheme` in JSON; URL schemes accept only the default `all`
+role. `dutis_diff` accepts `config_toml` rather than a filesystem path. This keeps the
 MCP surface independent from unrestricted file access and makes the exact input
 part of the reviewed tool call.
 

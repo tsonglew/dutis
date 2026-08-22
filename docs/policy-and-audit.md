@@ -29,21 +29,33 @@ Start from [`dutis.policy.example.toml`](../dutis.policy.example.toml):
 version = 1
 approval_mode = "explicit"
 allowed_extensions = ["md", "txt"]
+allowed_kinds = ["extension", "uti", "mime", "url_scheme"]
 allowed_applications = ["com.microsoft.VSCode", "com.apple.TextEdit"]
 
 [protected_associations]
 pdf = "com.apple.Preview"
+
+[[protected_handlers]]
+kind = "uti"
+identifier = "public.plain-text"
+role = "viewer"
+application = "com.apple.TextEdit"
 ```
 
 - `allowed_extensions` limits changed extensions. Omit it to allow any
-  extension; use an empty list to deny all extensions.
+  extension; use an empty list to deny all extensions. It does not constrain
+  other association kinds.
+- `allowed_kinds` limits changes by normalized association kind. Omit it to
+  allow all four kinds; use an empty list to deny all kinds.
 - `allowed_applications` limits target bundle identifiers with the same
   omitted-versus-empty behavior.
 - `protected_associations` permits an extension only when the target is the
   configured bundle identifier. This allows restoration to the protected value
   while denying changes away from it.
-- Unknown fields, invalid extensions, duplicate normalized values, and unknown
-  versions fail closed.
+- `protected_handlers` applies the same protection to a typed kind, identifier,
+  and role tuple. The role defaults to `all`; URL schemes accept only `all`.
+- Unknown fields, invalid identifiers or roles, duplicate normalized targets,
+  and unknown versions fail closed.
 
 Check a configuration against the current system state and policy without
 changing anything:

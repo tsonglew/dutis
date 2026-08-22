@@ -1,10 +1,18 @@
 version = 1
 approval_mode = "explicit"
 
-# Omit either allowlist to permit any value. An empty list permits none.
+# Omit an allowlist to permit any value. An empty list permits none.
 allowed_extensions = ["md", "txt", "json"]
+allowed_kinds = ["extension", "uti", "mime", "url_scheme"]
 allowed_applications = ["com.microsoft.VSCode", "com.apple.TextEdit"]
 
 # A protected extension may only remain on, or be restored to, this bundle ID.
 [protected_associations]
 pdf = "com.apple.Preview"
+
+# Typed protected handlers can include a Launch Services role.
+[[protected_handlers]]
+kind = "uti"
+identifier = "public.plain-text"
+role = "viewer"
+application = "com.apple.TextEdit"
