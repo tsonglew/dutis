@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{
-    ApplyArgs, Cli, CliCommand, ConfigArgs, ExtensionArgs, OutputArgs, RollbackArgs, SetArgs,
-    SnapshotArgs, SnapshotCommand, SnapshotCreateArgs,
+    ApplyArgs, Cli, CliCommand, ConfigArgs, ExtensionArgs, McpArgs, OutputArgs, RollbackArgs,
+    SetArgs, SnapshotArgs, SnapshotCommand, SnapshotCreateArgs,
 };
 use colored::*;
 use dutis::application::{
@@ -207,6 +207,7 @@ fn dispatch(command: Option<CliCommand>) -> Result<(), CliError> {
         Some(CliCommand::Snapshot(args)) => run_snapshot(args),
         Some(CliCommand::History(args)) => run_history(args),
         Some(CliCommand::Rollback(args)) => run_rollback(args),
+        Some(CliCommand::Mcp(args)) => run_mcp(args),
         Some(CliCommand::Doctor(args)) => run_doctor(args),
     }
 }
@@ -223,6 +224,7 @@ fn command_name(command: &CliCommand) -> &'static str {
         CliCommand::Snapshot(_) => "snapshot",
         CliCommand::History(_) => "history",
         CliCommand::Rollback(_) => "rollback",
+        CliCommand::Mcp(_) => "mcp",
         CliCommand::Doctor(_) => "doctor",
     }
 }
@@ -239,7 +241,15 @@ fn command_uses_json(command: &CliCommand) -> bool {
         },
         CliCommand::History(args) => args.json,
         CliCommand::Rollback(args) => args.json,
+        CliCommand::Mcp(_) => false,
     }
+}
+
+fn run_mcp(args: McpArgs) -> Result<(), CliError> {
+    let options = dutis::mcp::McpOptions::from_environment(args.allow_writes)
+        .map_err(|error| CliError::usage(format!("{error:#}")))?;
+    dutis::mcp::serve_stdio(options)
+        .map_err(|error| CliError::operation(format!("MCP server failed: {error:#}")))
 }
 
 fn run_list(args: OutputArgs) -> Result<(), CliError> {

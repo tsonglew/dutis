@@ -35,6 +35,8 @@ pub enum CliCommand {
     History(OutputArgs),
     /// Restore associations from a local snapshot
     Rollback(RollbackArgs),
+    /// Run the local Model Context Protocol server over stdio
+    Mcp(McpArgs),
     /// Check whether dutis and its runtime dependency are ready
     Doctor(OutputArgs),
 }
@@ -136,6 +138,13 @@ pub struct RollbackArgs {
     pub json: bool,
 }
 
+#[derive(Debug, Args)]
+pub struct McpArgs {
+    /// Register mutation tools; also requires DUTIS_MCP_APPROVAL_TOKEN
+    #[arg(long)]
+    pub allow_writes: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,5 +230,21 @@ mod tests {
             Cli::try_parse_from(["dutis", "rollback", "snapshot-id", "--dry-run", "--json"])
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn parses_read_only_and_write_enabled_mcp_server() {
+        let cli = Cli::try_parse_from(["dutis", "mcp"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(CliCommand::Mcp(McpArgs {
+                allow_writes: false
+            }))
+        ));
+        let cli = Cli::try_parse_from(["dutis", "mcp", "--allow-writes"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(CliCommand::Mcp(McpArgs { allow_writes: true }))
+        ));
     }
 }

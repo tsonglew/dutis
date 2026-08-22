@@ -19,6 +19,7 @@ A comprehensive Rust application for viewing file extensions supported by macOS 
 - 🤖 **Agent-ready CLI**: Stable JSON output, dry runs, deterministic selectors, and explicit exit codes
 - 📋 **Declarative Configuration**: Plan, diff, apply, and verify a versioned TOML policy
 - ↩️ **Snapshots and Rollback**: Persist pre-change state and restore it through the verified plan pipeline
+- 🔌 **Local MCP Server**: Give agents read-only discovery and planning tools with separately gated writes
 
 ## Installation
 
@@ -127,6 +128,17 @@ Real declarative applies and rollbacks automatically store a safety snapshot
 before the first mutation. See [snapshots and rollback](docs/snapshots-and-rollback.md)
 for storage, recovery behavior, and the safe limitation around removing an
 association.
+
+Run the local MCP server in its default read-only mode:
+
+```bash
+dutis mcp
+```
+
+Mutation tools are registered only with `--allow-writes` and require both a
+fresh plan digest and the server-side `DUTIS_MCP_APPROVAL_TOKEN`. See the
+[MCP server guide](docs/mcp-server.md) for client configuration, tool schemas,
+and the audit contract.
 
 Applications can be selected by exact bundle ID, exact application path, or an
 unambiguous application name. JSON responses use API version `1`. Exit codes are
