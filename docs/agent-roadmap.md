@@ -91,6 +91,8 @@ Acceptance criteria:
 
 ## Phase 4: MCP server and agent tools
 
+Status: implemented for v2.8.0
+
 Expose the core library through a local MCP server. Keep read tools (`list`,
 `query`, `get`, `diff`) separate from mutation tools (`apply`, `rollback`). Write
 tools accept a plan digest and explicit approval token rather than free-form
@@ -136,7 +138,7 @@ pipeline across all association types.
 
 ## Near-term engineering sequence
 
-1. Release Phase 3 and validate snapshot recovery across representative macOS
-   application sets.
-2. Expose the stable read, plan, apply, and rollback core through MCP.
-3. Add agent skills and policy controls before any autonomous mode.
+1. Release Phase 4 and validate read-only MCP discovery across representative
+   agent clients.
+2. Add agent skills and local policy controls before any autonomous mode.
+3. Persist mutation audit records as part of the policy layer.

@@ -1,5 +1,6 @@
 use serde_json::Value;
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn dutis() -> Command {
@@ -94,4 +95,68 @@ fn history_is_empty_for_an_isolated_state_directory() {
     let response: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(response["command"], "history");
     assert_eq!(response["data"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn mcp_stdio_initializes_and_advertises_read_only_tools() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let state = std::env::temp_dir().join(format!(
+        "dutis-mcp-integration-{}-{unique}",
+        std::process::id()
+    ));
+    let mut child = dutis()
+        .arg("mcp")
+        .env("DUTIS_STATE_DIR", state)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let input = concat!(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\"}}\n",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n",
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}\n",
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"dutis_history\",\"arguments\":{}}}\n"
+    );
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+
+    let responses = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(responses.len(), 3);
+    assert_eq!(responses[0]["result"]["protocolVersion"], "2024-11-05");
+    let tools = responses[1]["result"]["tools"].as_array().unwrap();
+    assert!(tools.iter().any(|tool| tool["name"] == "dutis_diff"));
+    assert!(!tools.iter().any(|tool| tool["name"] == "dutis_apply"));
+
+    let audit: Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(audit["schema_version"], 1);
+    assert_eq!(audit["tool"], "dutis_history");
+    assert_eq!(audit["access"], "read");
+}
+
+#[test]
+fn mcp_write_mode_requires_a_server_side_approval_token() {
+    let output = dutis()
+        .env_remove("DUTIS_MCP_APPROVAL_TOKEN")
+        .args(["mcp", "--allow-writes"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8(output.stderr)
+        .unwrap()
+        .contains("DUTIS_MCP_APPROVAL_TOKEN"));
 }
