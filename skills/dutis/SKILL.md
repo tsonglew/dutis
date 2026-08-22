@@ -28,6 +28,12 @@ Use Dutis for macOS filename-extension associations. Preserve its
 7. Verify with `dutis get`, then use `dutis audit` when the user needs the full
    local record.
 
+For monitoring requests, use `dutis_drift` or `dutis watch <config> --once`
+first. Explain whether the report is `in_sync`, `drift_detected`, or
+`unresolved`. Do not enable `--remediate` or install a remediating LaunchAgent
+without explicit user authorization for continuous system changes. A
+notification-only LaunchAgent is the safe default.
+
 For CLI workflows, prefer `dutis plan`, `dutis policy check`, and
 `dutis apply --dry-run` before the confirmed `dutis apply` command with
 `--yes`, `--plan-digest`, and `--requester`. For rollback, preview with

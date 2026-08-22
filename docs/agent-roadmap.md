@@ -139,9 +139,23 @@ Acceptance criteria:
 
 ## Phase 7: Drift detection
 
+Status: implemented for v2.11.0
+
 Add `dutis watch` and an optional LaunchAgent to detect differences from a
 declared policy. Start with notifications and reports. Automatic remediation is
 opt-in and requires rollback-ready snapshots.
+
+Acceptance criteria:
+
+- One-shot and continuous checks emit timestamped, versioned drift reports.
+- Notifications are sent only when drift changes or the monitored state
+  recovers during a watcher session.
+- The optional per-user LaunchAgent uses an absolute executable and config path,
+  keeps secrets out of its plist, and records JSON Lines logs.
+- Remediation requires explicit opt-in and a requester identity, then passes
+  through policy, audit, safety snapshot, mutation, and verification.
+- MCP exposes drift inspection as a read-only tool and does not add an
+  autonomous write tool.
 
 ## Phase 8: Broader association support
 
@@ -151,7 +165,7 @@ pipeline across all association types.
 
 ## Near-term engineering sequence
 
-1. Release Phase 6 and validate profile evidence across common macOS setups.
-2. Design notification-first drift detection on top of the audited policy
-   layer.
-3. Expand normalized planning to URL schemes, UTIs, and MIME types.
+1. Release Phase 7 and validate long-running LaunchAgent behavior across Intel
+   and Apple Silicon Macs.
+2. Expand normalized planning to URL schemes, UTIs, and MIME types.
+3. Add richer event sinks after the normalized association model is stable.

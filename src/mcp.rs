@@ -1,5 +1,6 @@
 use crate::application::{find_apps_for_extension, normalize_extension, ApplicationCatalog};
 use crate::config::DutisConfig;
+use crate::drift::DriftReport;
 use crate::governance::{
     execute_governed_plan, AuditStore, GovernanceError, GovernanceErrorKind, LoadedPolicy,
     MutationChannel, MutationOperation, MutationRequest,
@@ -79,6 +80,7 @@ trait McpBackend {
     fn profiles(&mut self) -> Result<Value>;
     fn profile(&mut self, name: &str) -> Result<Value>;
     fn recommend(&mut self, name: &str) -> Result<Value>;
+    fn drift(&mut self, config: &DutisConfig) -> Result<Value>;
     fn query(&mut self, extension: &str) -> Result<Value>;
     fn get(&mut self, extension: &str) -> Result<Value>;
     fn plan(&mut self, config: &DutisConfig) -> Result<AssociationPlan>;
@@ -128,6 +130,16 @@ impl McpBackend for SystemBackend {
             "policy": policy.summary(),
             "recommendation": recommendation,
         }))
+    }
+
+    fn drift(&mut self, config: &DutisConfig) -> Result<Value> {
+        system::duti_version()?;
+        let catalog = ApplicationCatalog::scan()?;
+        let plan = build_plan(config, &catalog.applications, system::query_default_app)?;
+        let policy = LoadedPolicy::from_environment()?;
+        let assessment = policy.policy.assess(&plan);
+        serde_json::to_value(DriftReport::new(plan, policy.summary(), assessment)?)
+            .context("failed to serialize drift report")
     }
 
     fn query(&mut self, extension: &str) -> Result<Value> {
@@ -335,6 +347,10 @@ impl<B: McpBackend> McpServer<B> {
                     ));
                 }
                 self.backend.recommend(profile).map_err(operation_error)
+            }
+            "dutis_drift" => {
+                let config = parse_config(arguments)?;
+                self.backend.drift(&config).map_err(operation_error)
             }
             "dutis_query" => {
                 let extension = argument_string(arguments, "extension")?;
@@ -664,6 +680,12 @@ fn tool_definitions(allow_writes: bool) -> Vec<Value> {
             read_annotations.clone(),
         ),
         tool_definition(
+            "dutis_drift",
+            "Check an inline configuration for drift and return a timestamped report with policy assessment without changing the system.",
+            config_schema.clone(),
+            read_annotations.clone(),
+        ),
+        tool_definition(
             "dutis_query",
             "Find installed applications that declare support for an extension.",
             extension_schema.clone(),
@@ -869,6 +891,14 @@ mod tests {
             Ok(json!({"profile": name, "proposal_only": true}))
         }
 
+        fn drift(&mut self, _config: &DutisConfig) -> Result<Value> {
+            Ok(json!({
+                "schema_version": 1,
+                "state": "in_sync",
+                "plan_digest": self.plan.digest,
+            }))
+        }
+
         fn query(&mut self, extension: &str) -> Result<Value> {
             Ok(json!({"extension": extension, "applications": []}))
         }
@@ -957,6 +987,7 @@ mod tests {
         assert!(names.contains(&"dutis_profiles"));
         assert!(names.contains(&"dutis_profile"));
         assert!(names.contains(&"dutis_recommend"));
+        assert!(names.contains(&"dutis_drift"));
         assert!(names.contains(&"dutis_policy_check"));
         assert!(names.contains(&"dutis_audit"));
         assert!(!names.contains(&"dutis_apply"));
@@ -997,6 +1028,29 @@ mod tests {
             missing.response.unwrap()["result"]["structuredContent"]["error"]["kind"],
             "not_found"
         );
+    }
+
+    #[test]
+    fn drift_tool_is_read_only_and_returns_a_versioned_report() {
+        let mut server = McpServer::new(FakeBackend::new(), McpOptions::read_only());
+        let outcome = server.handle(request(
+            7,
+            "tools/call",
+            json!({
+                "name": "dutis_drift",
+                "arguments": {"config_toml": config_toml()}
+            }),
+        ));
+        let response = outcome.response.unwrap();
+        assert_eq!(
+            response["result"]["structuredContent"]["data"]["schema_version"],
+            1
+        );
+        assert_eq!(
+            response["result"]["structuredContent"]["data"]["state"],
+            "in_sync"
+        );
+        assert_eq!(outcome.audit.unwrap().access, "read");
     }
 
     #[test]

@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{
-    ApplyArgs, Cli, CliCommand, ConfigArgs, ExtensionArgs, McpArgs, OutputArgs, PolicyArgs,
-    PolicyCheckArgs, PolicyCommand, ProfileArgs, ProfileCommand, ProfileShowArgs, RecommendArgs,
-    RollbackArgs, SetArgs, SnapshotArgs, SnapshotCommand, SnapshotCreateArgs,
+    ApplyArgs, Cli, CliCommand, ConfigArgs, ExtensionArgs, LaunchAgentArgs, LaunchAgentCommand,
+    LaunchAgentInstallArgs, McpArgs, OutputArgs, PolicyArgs, PolicyCheckArgs, PolicyCommand,
+    ProfileArgs, ProfileCommand, ProfileShowArgs, RecommendArgs, RollbackArgs, SetArgs,
+    SnapshotArgs, SnapshotCommand, SnapshotCreateArgs, WatchArgs,
 };
 use colored::*;
 use dutis::application::{
@@ -11,10 +12,12 @@ use dutis::application::{
     ApplicationCatalog,
 };
 use dutis::config::DutisConfig;
+use dutis::drift::{send_macos_notification, DriftReport, DriftState, DriftTracker};
 use dutis::governance::{
-    execute_governed_plan, AuditStore, GovernanceErrorKind, GovernedMutation, LoadedPolicy,
-    MutationChannel, MutationOperation, MutationRequest, PolicyAssessment,
+    execute_governed_plan, ApprovalMode, AuditStore, GovernanceErrorKind, GovernedMutation,
+    LoadedPolicy, MutationChannel, MutationOperation, MutationRequest, PolicyAssessment,
 };
+use dutis::launch_agent::{LaunchAgentManager, LaunchAgentSpec, LaunchAgentStatus};
 use dutis::planner::{
     assemble_plan, build_plan, AssociationPlan, PlanAction, PlanEntry, PlanSummary,
     PlannedApplication,
@@ -26,10 +29,12 @@ use dutis::snapshot::{
 use dutis::system;
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Duration;
 
 mod cli;
 
@@ -182,6 +187,26 @@ struct RecommendResult {
     assessment: PolicyAssessment,
 }
 
+#[derive(Serialize)]
+struct WatchResult {
+    report: DriftReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remediation: Option<WatchRemediation>,
+}
+
+#[derive(Serialize)]
+struct WatchRemediation {
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mutation: Option<GovernedMutation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    audit_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    violations: Vec<String>,
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let command_name = cli
@@ -233,6 +258,8 @@ fn dispatch(command: Option<CliCommand>) -> Result<(), CliError> {
         Some(CliCommand::Audit(args)) => run_audit(args),
         Some(CliCommand::Profile(args)) => run_profile(args),
         Some(CliCommand::Recommend(args)) => run_recommend(args),
+        Some(CliCommand::Watch(args)) => run_watch(args),
+        Some(CliCommand::LaunchAgent(args)) => run_launch_agent(args),
         Some(CliCommand::Mcp(args)) => run_mcp(args),
         Some(CliCommand::Doctor(args)) => run_doctor(args),
     }
@@ -254,6 +281,8 @@ fn command_name(command: &CliCommand) -> &'static str {
         CliCommand::Audit(_) => "audit",
         CliCommand::Profile(_) => "profile",
         CliCommand::Recommend(_) => "recommend",
+        CliCommand::Watch(_) => "watch",
+        CliCommand::LaunchAgent(_) => "launch-agent",
         CliCommand::Mcp(_) => "mcp",
         CliCommand::Doctor(_) => "doctor",
     }
@@ -281,8 +310,292 @@ fn command_uses_json(command: &CliCommand) -> bool {
             ProfileCommand::Show(args) => args.json,
         },
         CliCommand::Recommend(args) => args.json,
+        CliCommand::Watch(args) => args.json,
+        CliCommand::LaunchAgent(args) => match &args.command {
+            LaunchAgentCommand::Install(args) => args.json,
+            LaunchAgentCommand::Uninstall(args) | LaunchAgentCommand::Status(args) => args.json,
+        },
         CliCommand::Mcp(_) => false,
     }
+}
+
+fn run_watch(args: WatchArgs) -> Result<(), CliError> {
+    validate_remediation_options(args.remediate, args.yes, args.requester.as_deref())?;
+    let mut tracker = DriftTracker::default();
+    loop {
+        let report = build_drift_report(&args.config)?;
+        if args.notify && tracker.should_notify(&report) {
+            if let Err(error) = send_macos_notification(&report.notification()) {
+                eprintln!("Warning: failed to send drift notification: {error:#}");
+            }
+        }
+        let remediation = if args.remediate && report.state == DriftState::DriftDetected {
+            let request = MutationRequest {
+                requester: args
+                    .requester
+                    .as_deref()
+                    .expect("validated remediation requester")
+                    .trim()
+                    .to_owned(),
+                channel: MutationChannel::Watcher,
+                operation: MutationOperation::Remediate,
+                explicit_approval: args.yes,
+                approval_token: std::env::var("DUTIS_WATCH_APPROVAL_TOKEN").ok(),
+            };
+            match execute_governed_plan(
+                &report.plan,
+                SnapshotReason::BeforeRemediation,
+                &request,
+                system::set_default_app,
+            ) {
+                Ok(result) => Some(WatchRemediation {
+                    status: if result.report.failed == 0 {
+                        "succeeded"
+                    } else {
+                        "partial_failure"
+                    },
+                    mutation: Some(result),
+                    audit_id: None,
+                    error: None,
+                    violations: Vec::new(),
+                }),
+                Err(error) => Some(WatchRemediation {
+                    status: "blocked",
+                    mutation: None,
+                    audit_id: error.audit_id().map(str::to_owned),
+                    error: Some(error.to_string()),
+                    violations: error.violations().to_vec(),
+                }),
+            }
+        } else {
+            None
+        };
+        let result = WatchResult {
+            report,
+            remediation,
+        };
+        print_watch_result(&result, args.json)?;
+        if args.once {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_secs(args.interval_seconds));
+    }
+}
+
+fn validate_remediation_options(
+    remediate: bool,
+    yes: bool,
+    requester: Option<&str>,
+) -> Result<(), CliError> {
+    if remediate && !yes {
+        return Err(CliError::usage(
+            "--remediate requires --yes because it can change system associations",
+        ));
+    }
+    if remediate && requester.is_none_or(|value| value.trim().is_empty()) {
+        return Err(CliError::usage(
+            "--remediate requires a non-empty --requester for the mutation audit",
+        ));
+    }
+    if !remediate && (yes || requester.is_some()) {
+        return Err(CliError::usage(
+            "--yes and --requester are only valid with --remediate",
+        ));
+    }
+    Ok(())
+}
+
+fn build_drift_report(config: &Path) -> Result<DriftReport, CliError> {
+    let plan = build_declarative_plan(config)?;
+    let policy = LoadedPolicy::from_environment()
+        .map_err(|error| CliError::usage(format!("failed to load policy: {error:#}")))?;
+    let assessment = policy.policy.assess(&plan);
+    DriftReport::new(plan, policy.summary(), assessment)
+        .map_err(|error| CliError::operation(format!("failed to build drift report: {error:#}")))
+}
+
+fn print_watch_result(result: &WatchResult, json: bool) -> Result<(), CliError> {
+    if json {
+        let line = serde_json::to_string(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "watch",
+            data: result,
+        })
+        .map_err(|error| CliError::operation(format!("failed to serialize JSON: {error}")))?;
+        println!("{line}");
+        return Ok(());
+    }
+    println!("Checked: {}", result.report.checked_at);
+    println!("State: {:?}", result.report.state);
+    for entry in &result.report.changes {
+        let current = entry
+            .current
+            .as_ref()
+            .map(|application| application.bundle_id.as_str())
+            .unwrap_or("<none>");
+        let target = entry
+            .target
+            .as_ref()
+            .map(|application| application.bundle_id.as_str())
+            .unwrap_or("<unresolved>");
+        println!("DRIFT .{}: {} -> {}", entry.extension, current, target);
+    }
+    for entry in &result.report.unresolved {
+        println!(
+            "UNRESOLVED .{}: {}",
+            entry.extension,
+            entry.reason.as_deref().unwrap_or("unknown reason")
+        );
+    }
+    println!("Plan digest: {}", result.report.plan_digest);
+    println!(
+        "Policy decision: {}",
+        if result.report.assessment.allowed {
+            "allowed"
+        } else {
+            "denied"
+        }
+    );
+    if let Some(remediation) = &result.remediation {
+        println!("Remediation: {}", remediation.status);
+        if let Some(mutation) = &remediation.mutation {
+            println!("Remediation audit: {}", mutation.audit_id);
+            if let Some(snapshot) = &mutation.safety_snapshot_id {
+                println!("Safety snapshot: {snapshot}");
+            }
+            println!("Remediated: {}", mutation.report.applied);
+        }
+        if let Some(error) = &remediation.error {
+            println!("Remediation error: {error}");
+        }
+    }
+    Ok(())
+}
+
+fn run_launch_agent(args: LaunchAgentArgs) -> Result<(), CliError> {
+    match args.command {
+        LaunchAgentCommand::Install(args) => run_launch_agent_install(args),
+        LaunchAgentCommand::Uninstall(args) => {
+            let manager = launch_agent_manager()?;
+            let status = manager.uninstall().map_err(|error| {
+                CliError::operation(format!("failed to uninstall LaunchAgent: {error:#}"))
+            })?;
+            print_launch_agent_status(&status, args.json)
+        }
+        LaunchAgentCommand::Status(args) => {
+            let manager = launch_agent_manager()?;
+            let status = manager.status().map_err(|error| {
+                CliError::operation(format!("failed to inspect LaunchAgent: {error:#}"))
+            })?;
+            print_launch_agent_status(&status, args.json)
+        }
+    }
+}
+
+fn run_launch_agent_install(args: LaunchAgentInstallArgs) -> Result<(), CliError> {
+    validate_remediation_options(args.remediate, args.yes, args.requester.as_deref())?;
+    DutisConfig::load(&args.config).map_err(|error| CliError::usage(format!("{error:#}")))?;
+    let config = std::fs::canonicalize(&args.config).map_err(|error| {
+        CliError::operation(format!(
+            "failed to resolve configuration {}: {error}",
+            args.config.display()
+        ))
+    })?;
+    if args.remediate {
+        let policy = LoadedPolicy::from_environment()
+            .map_err(|error| CliError::usage(format!("failed to load policy: {error:#}")))?;
+        if policy.policy.approval_mode != ApprovalMode::Explicit {
+            return Err(CliError::usage(
+                "LaunchAgent remediation requires approval_mode = 'explicit'; tokens are never stored in the plist",
+            ));
+        }
+    }
+    let executable = locate_invoked_executable()?;
+    let state_dir = snapshot_store()?.root().to_path_buf();
+    let mut environment = BTreeMap::from([(
+        "PATH".to_owned(),
+        "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin".to_owned(),
+    )]);
+    environment.insert(
+        "DUTIS_STATE_DIR".to_owned(),
+        state_dir.display().to_string(),
+    );
+    if let Some(value) = std::env::var_os("DUTIS_POLICY_FILE").filter(|value| !value.is_empty()) {
+        environment.insert(
+            "DUTIS_POLICY_FILE".to_owned(),
+            value.to_string_lossy().into_owned(),
+        );
+    }
+    let spec = LaunchAgentSpec {
+        executable,
+        config,
+        interval_seconds: args.interval_seconds,
+        notify: args.notify,
+        remediation_requester: args.remediate.then(|| {
+            args.requester
+                .expect("validated remediation requester")
+                .trim()
+                .to_owned()
+        }),
+        state_dir,
+        environment,
+    };
+    let status = launch_agent_manager()?.install(&spec).map_err(|error| {
+        CliError::operation(format!("failed to install LaunchAgent: {error:#}"))
+    })?;
+    print_launch_agent_status(&status, args.json)
+}
+
+fn launch_agent_manager() -> Result<LaunchAgentManager, CliError> {
+    LaunchAgentManager::from_environment()
+        .map_err(|error| CliError::operation(format!("failed to locate LaunchAgents: {error:#}")))
+}
+
+fn locate_invoked_executable() -> Result<PathBuf, CliError> {
+    let invoked = std::env::args_os()
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(|| CliError::operation("failed to read the dutis executable path"))?;
+    if invoked.is_absolute() && invoked.is_file() {
+        return Ok(invoked);
+    }
+    if invoked.components().count() > 1 {
+        return std::fs::canonicalize(&invoked).map_err(|error| {
+            CliError::operation(format!("failed to resolve {}: {error}", invoked.display()))
+        });
+    }
+    if let Some(path) = std::env::var_os("PATH") {
+        for directory in std::env::split_paths(&path) {
+            let candidate = directory.join(&invoked);
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+    }
+    std::env::current_exe()
+        .map_err(|error| CliError::operation(format!("failed to locate dutis: {error}")))
+}
+
+fn print_launch_agent_status(status: &LaunchAgentStatus, json: bool) -> Result<(), CliError> {
+    if json {
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "launch-agent",
+            data: status,
+        })?;
+    } else {
+        println!("Label: {}", status.label);
+        println!("Path: {}", status.path.display());
+        println!("Installed: {}", status.installed);
+        println!(
+            "Loaded: {}",
+            status
+                .loaded
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "unavailable".to_owned())
+        );
+    }
+    Ok(())
 }
 
 fn run_profile(args: ProfileArgs) -> Result<(), CliError> {

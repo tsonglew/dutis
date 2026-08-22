@@ -102,7 +102,8 @@ dutis audit
 dutis audit --json
 ```
 
-Every record includes the requester, channel, operation, policy and plan
+Every record includes the requester, channel (`cli`, `interactive`, `mcp`, or
+`watcher`), operation, policy and plan
 digests, and full reviewed plan. Completed mutation records also include the
 safety snapshot ID, per-entry result, and verification summary. Dutis atomically
 writes a `pending` record before a mutation. If policy denies the request, it

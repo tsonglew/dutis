@@ -22,6 +22,7 @@ A comprehensive Rust application for viewing file extensions supported by macOS 
 - 🔌 **Local MCP Server**: Give agents read-only discovery and planning tools with separately gated writes
 - 🛡️ **Policy and Audit**: Enforce local allowlists and approvals with durable, verified mutation records
 - 💡 **Explainable Profiles**: Generate evidence-backed developer, designer, media, or minimal proposals without changing the system
+- 👀 **Drift Monitoring**: Detect association changes continuously, notify through macOS, and optionally remediate through snapshots and policy
 
 ## Installation
 
@@ -163,6 +164,25 @@ support, the current handler, the proposed TOML, a deterministic plan digest,
 and the effective policy assessment. They never change system associations.
 Review [profiles and recommendations](docs/profiles-and-recommendations.md) for
 selection rules and the safe path from a proposal to an approved apply.
+
+Check a declared configuration once or monitor it continuously:
+
+```bash
+dutis watch dutis.toml --once --json
+dutis watch dutis.toml --interval-seconds 60 --notify
+```
+
+Install an optional per-user LaunchAgent that keeps the monitor running:
+
+```bash
+dutis launch-agent install dutis.toml --interval-seconds 300 --notify
+dutis launch-agent status
+```
+
+Monitoring is read-only by default. Automatic remediation requires
+`--remediate --yes --requester <identity>` and always passes through policy,
+audit, safety snapshot, apply, and verification. See
+[drift detection](docs/drift-detection.md).
 
 All write paths enforce the same local policy before mutation and record the
 requester, reviewed plan, result, and verification. See the

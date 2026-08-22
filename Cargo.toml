@@ -1,6 +1,6 @@
 [package]
 name = "dutis"
-version = "2.10.0"
+version = "2.11.0"
 edition = "2021"
 rust-version = "1.88"
 description = "A comprehensive macOS application File Extension Manager and default app setter written in Rust"
