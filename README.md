@@ -18,6 +18,7 @@ A comprehensive Rust application for viewing file extensions supported by macOS 
 - ✅ **Verified Updates**: Verifies the selected default application after applying it
 - 🤖 **Agent-ready CLI**: Stable JSON output, dry runs, deterministic selectors, and explicit exit codes
 - 📋 **Declarative Configuration**: Plan, diff, apply, and verify a versioned TOML policy
+- ↩️ **Snapshots and Rollback**: Persist pre-change state and restore it through the verified plan pipeline
 
 ## Installation
 
@@ -113,6 +114,20 @@ partial failures include a result for every association. See the
 [declarative configuration guide](docs/declarative-configuration.md) for the
 schema and safety contract.
 
+Create, inspect, and restore local snapshots:
+
+```bash
+dutis snapshot create --config dutis.toml
+dutis history
+dutis rollback <snapshot-id> --dry-run
+dutis rollback <snapshot-id> --yes
+```
+
+Real declarative applies and rollbacks automatically store a safety snapshot
+before the first mutation. See [snapshots and rollback](docs/snapshots-and-rollback.md)
+for storage, recovery behavior, and the safe limitation around removing an
+association.
+
 Applications can be selected by exact bundle ID, exact application path, or an
 unambiguous application name. JSON responses use API version `1`. Exit codes are
 `0` for success, `2` for usage errors, `3` for no match, `4` for ambiguous
@@ -154,6 +169,7 @@ MCP, agent policies, profiles, and drift detection is documented in the
 - **serde / serde_json**: Versioned machine-readable output
 - **toml**: Strict declarative configuration parsing
 - **sha2**: Deterministic reviewed-plan digests
+- **time**: Portable RFC 3339 snapshot timestamps
 
 ## Releases
 

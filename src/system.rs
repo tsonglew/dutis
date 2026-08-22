@@ -1,9 +1,9 @@
 use anyhow::{anyhow, bail, Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io;
 use std::process::Command;
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DefaultApplication {
     pub extension: String,
     pub name: Option<String>,

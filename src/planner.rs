@@ -24,7 +24,7 @@ pub struct PlannedApplication {
 }
 
 impl PlannedApplication {
-    fn from_application(application: &Application) -> Option<Self> {
+    pub fn from_application(application: &Application) -> Option<Self> {
         Some(Self {
             name: application.name.clone(),
             path: application.path.clone(),
@@ -152,11 +152,15 @@ where
         entries.push(entry);
     }
 
+    assemble_plan(config.version, entries)
+}
+
+pub fn assemble_plan(config_version: u32, entries: Vec<PlanEntry>) -> Result<AssociationPlan> {
     let summary = summarize(&entries);
-    let digest = calculate_digest(config.version, &entries)?;
+    let digest = calculate_digest(config_version, &entries)?;
     Ok(AssociationPlan {
         schema_version: PLAN_SCHEMA_VERSION,
-        config_version: config.version,
+        config_version,
         digest,
         summary,
         entries,

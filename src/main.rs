@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use cli::{ApplyArgs, Cli, CliCommand, ConfigArgs, ExtensionArgs, OutputArgs, SetArgs};
+use cli::{
+    ApplyArgs, Cli, CliCommand, ConfigArgs, ExtensionArgs, OutputArgs, RollbackArgs, SetArgs,
+    SnapshotArgs, SnapshotCommand, SnapshotCreateArgs,
+};
 use colored::*;
 use dutis::application::{
     find_apps_for_extension, find_fuzzy_matches, normalize_extension, resolve_app, Application,
@@ -8,13 +11,18 @@ use dutis::application::{
 };
 use dutis::config::DutisConfig;
 use dutis::planner::{
-    apply_plan, build_plan, ApplyReport, AssociationPlan, PlanAction, PlanEntry, PlanSummary,
+    build_plan, ApplyReport, AssociationPlan, PlanAction, PlanEntry, PlanSummary,
+};
+use dutis::snapshot::{
+    apply_plan_with_snapshot, build_rollback_plan, capture_associations, SnapshotReason,
+    SnapshotStore, SnapshotSummary,
 };
 use dutis::system;
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 mod cli;
@@ -133,6 +141,25 @@ struct DiffResult<'a> {
     entries: Vec<&'a PlanEntry>,
 }
 
+#[derive(Serialize)]
+struct SnapshotCreated {
+    snapshot: SnapshotSummary,
+    path: PathBuf,
+}
+
+#[derive(Serialize)]
+struct MutationResult {
+    safety_snapshot_id: Option<String>,
+    #[serde(flatten)]
+    report: ApplyReport,
+}
+
+#[derive(Serialize)]
+struct RollbackPreview<'a> {
+    snapshot_id: &'a str,
+    plan: &'a AssociationPlan,
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let command_name = cli
@@ -177,6 +204,9 @@ fn dispatch(command: Option<CliCommand>) -> Result<(), CliError> {
         Some(CliCommand::Plan(args)) => run_plan(args),
         Some(CliCommand::Diff(args)) => run_diff(args),
         Some(CliCommand::Apply(args)) => run_apply(args),
+        Some(CliCommand::Snapshot(args)) => run_snapshot(args),
+        Some(CliCommand::History(args)) => run_history(args),
+        Some(CliCommand::Rollback(args)) => run_rollback(args),
         Some(CliCommand::Doctor(args)) => run_doctor(args),
     }
 }
@@ -190,6 +220,9 @@ fn command_name(command: &CliCommand) -> &'static str {
         CliCommand::Plan(_) => "plan",
         CliCommand::Diff(_) => "diff",
         CliCommand::Apply(_) => "apply",
+        CliCommand::Snapshot(_) => "snapshot",
+        CliCommand::History(_) => "history",
+        CliCommand::Rollback(_) => "rollback",
         CliCommand::Doctor(_) => "doctor",
     }
 }
@@ -201,6 +234,11 @@ fn command_uses_json(command: &CliCommand) -> bool {
         CliCommand::Set(args) => args.json,
         CliCommand::Plan(args) | CliCommand::Diff(args) => args.json,
         CliCommand::Apply(args) => args.json,
+        CliCommand::Snapshot(args) => match &args.command {
+            SnapshotCommand::Create(args) => args.json,
+        },
+        CliCommand::History(args) => args.json,
+        CliCommand::Rollback(args) => args.json,
     }
 }
 
@@ -462,17 +500,17 @@ fn run_apply(args: ApplyArgs) -> Result<(), CliError> {
         ));
     }
 
-    let report = apply_plan(&plan, system::set_default_app);
-    if report.failed > 0 {
-        let details = serde_json::to_value(&report)
+    let result = execute_plan_with_snapshot(&plan, SnapshotReason::BeforeApply)?;
+    if result.report.failed > 0 {
+        let details = serde_json::to_value(&result)
             .map_err(|error| CliError::operation(format!("failed to serialize report: {error}")))?;
         if !args.json {
-            print_apply_report(&report);
+            print_mutation_result(&result);
         }
         return Err(CliError::partial_failure(
             format!(
                 "{} association(s) failed; {} applied and {} skipped",
-                report.failed, report.applied, report.skipped
+                result.report.failed, result.report.applied, result.report.skipped
             ),
             details,
         ));
@@ -482,12 +520,201 @@ fn run_apply(args: ApplyArgs) -> Result<(), CliError> {
         write_json(&JsonEnvelope {
             api_version: API_VERSION,
             command: "apply",
-            data: report,
+            data: result,
         })?;
     } else {
-        print_apply_report(&report);
+        print_mutation_result(&result);
     }
     Ok(())
+}
+
+fn run_snapshot(args: SnapshotArgs) -> Result<(), CliError> {
+    match args.command {
+        SnapshotCommand::Create(args) => run_snapshot_create(args),
+    }
+}
+
+fn run_snapshot_create(args: SnapshotCreateArgs) -> Result<(), CliError> {
+    let extensions = if let Some(path) = args.config {
+        DutisConfig::load(&path)
+            .map_err(|error| CliError::usage(format!("{error:#}")))?
+            .associations
+            .into_keys()
+            .collect::<BTreeSet<_>>()
+    } else {
+        let catalog = scan_catalog()?;
+        report_metadata_failures(catalog.metadata_failures);
+        catalog
+            .applications
+            .into_iter()
+            .flat_map(|application| application.extensions)
+            .collect::<BTreeSet<_>>()
+    };
+
+    system::duti_version().map_err(|error| CliError::dependency(format!("{error:#}")))?;
+    let associations =
+        capture_associations(extensions, system::query_default_app).map_err(|error| {
+            CliError::operation(format!("failed to capture associations: {error:#}"))
+        })?;
+    let store = snapshot_store()?;
+    let snapshot = store
+        .create(SnapshotReason::Manual, None, associations)
+        .map_err(|error| CliError::operation(format!("failed to store snapshot: {error:#}")))?;
+    let path = store
+        .snapshot_path(&snapshot.id)
+        .map_err(|error| CliError::operation(format!("{error:#}")))?;
+    let created = SnapshotCreated {
+        snapshot: SnapshotSummary::from(&snapshot),
+        path,
+    };
+    if args.json {
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "snapshot",
+            data: created,
+        })?;
+    } else {
+        println!("Snapshot: {}", created.snapshot.id);
+        println!("Associations: {}", created.snapshot.associations);
+        println!("Stored at: {}", created.path.display());
+    }
+    Ok(())
+}
+
+fn run_history(args: OutputArgs) -> Result<(), CliError> {
+    let store = snapshot_store()?;
+    let history = store.history().map_err(|error| {
+        CliError::operation(format!("failed to read snapshot history: {error:#}"))
+    })?;
+    if args.json {
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "history",
+            data: history,
+        })?;
+    } else if history.is_empty() {
+        println!("No snapshots found in {}", store.root().display());
+    } else {
+        for snapshot in history {
+            println!(
+                "{}\t{}\t{:?}\t{} association(s)",
+                snapshot.id, snapshot.created_at, snapshot.reason, snapshot.associations
+            );
+        }
+    }
+    Ok(())
+}
+
+fn run_rollback(args: RollbackArgs) -> Result<(), CliError> {
+    if !args.dry_run && !args.yes {
+        return Err(CliError::usage(
+            "refusing to roll back without --yes; use --dry-run to preview",
+        ));
+    }
+
+    let store = snapshot_store()?;
+    let snapshot_path = store
+        .snapshot_path(&args.snapshot_id)
+        .map_err(|error| CliError::usage(format!("{error:#}")))?;
+    if !snapshot_path.is_file() {
+        return Err(CliError::not_found(format!(
+            "snapshot '{}' was not found",
+            args.snapshot_id
+        )));
+    }
+    let snapshot = store
+        .load(&args.snapshot_id)
+        .map_err(|error| CliError::operation(format!("failed to load snapshot: {error:#}")))?;
+    let catalog = scan_catalog()?;
+    report_metadata_failures(catalog.metadata_failures);
+    system::duti_version().map_err(|error| CliError::dependency(format!("{error:#}")))?;
+    let plan = build_rollback_plan(&snapshot, &catalog.applications, system::query_default_app)
+        .map_err(|error| {
+            CliError::operation(format!("failed to build rollback plan: {error:#}"))
+        })?;
+
+    if args.dry_run {
+        if args.json {
+            write_json(&JsonEnvelope {
+                api_version: API_VERSION,
+                command: "rollback",
+                data: RollbackPreview {
+                    snapshot_id: &snapshot.id,
+                    plan: &plan,
+                },
+            })?;
+        } else {
+            println!("Rollback snapshot: {}\n", snapshot.id);
+            print_plan(&plan, false);
+        }
+        return Ok(());
+    }
+
+    if plan.has_unresolved() {
+        let details = serde_json::to_value(RollbackPreview {
+            snapshot_id: &snapshot.id,
+            plan: &plan,
+        })
+        .map_err(|error| CliError::operation(format!("failed to serialize plan: {error}")))?;
+        if !args.json {
+            print_plan(&plan, false);
+        }
+        return Err(CliError::not_found(format!(
+            "rollback contains {} unresolved association(s); no changes were made",
+            plan.summary.unresolved
+        ))
+        .with_details(details));
+    }
+
+    let result = execute_plan_with_snapshot(&plan, SnapshotReason::BeforeRollback)?;
+    if result.report.failed > 0 {
+        let details = serde_json::to_value(&result)
+            .map_err(|error| CliError::operation(format!("failed to serialize report: {error}")))?;
+        if !args.json {
+            print_mutation_result(&result);
+        }
+        return Err(CliError::partial_failure(
+            format!(
+                "rollback failed for {} association(s); safety snapshot retained",
+                result.report.failed
+            ),
+            details,
+        ));
+    }
+
+    if args.json {
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "rollback",
+            data: result,
+        })?;
+    } else {
+        print_mutation_result(&result);
+    }
+    Ok(())
+}
+
+fn execute_plan_with_snapshot(
+    plan: &AssociationPlan,
+    reason: SnapshotReason,
+) -> Result<MutationResult, CliError> {
+    let store = snapshot_store()?;
+    let protected = apply_plan_with_snapshot(&store, plan, reason, system::set_default_app)
+        .map_err(|error| {
+            CliError::operation(format!(
+                "failed to store safety snapshot; no changes were made: {error:#}"
+            ))
+        })?;
+    Ok(MutationResult {
+        safety_snapshot_id: protected.safety_snapshot.map(|snapshot| snapshot.id),
+        report: protected.report,
+    })
+}
+
+fn snapshot_store() -> Result<SnapshotStore, CliError> {
+    SnapshotStore::from_environment().map_err(|error| {
+        CliError::operation(format!("failed to resolve snapshot storage: {error:#}"))
+    })
 }
 
 fn build_declarative_plan(path: &Path) -> Result<AssociationPlan, CliError> {
@@ -540,13 +767,16 @@ fn print_plan(plan: &AssociationPlan, changes_only: bool) {
     println!("Plan digest: {}", plan.digest);
 }
 
-fn print_apply_report(report: &ApplyReport) {
-    for result in &report.results {
+fn print_mutation_result(result: &MutationResult) {
+    if let Some(snapshot_id) = &result.safety_snapshot_id {
+        println!("Safety snapshot: {snapshot_id}\n");
+    }
+    for entry in &result.report.results {
         println!(
             "{:?} .{}{}",
-            result.status,
-            result.extension,
-            result
+            entry.status,
+            entry.extension,
+            entry
                 .error
                 .as_ref()
                 .map(|error| format!(": {error}"))
@@ -555,7 +785,7 @@ fn print_apply_report(report: &ApplyReport) {
     }
     println!(
         "\nApplied: {}, skipped: {}, failed: {}",
-        report.applied, report.skipped, report.failed
+        result.report.applied, result.report.skipped, result.report.failed
     );
 }
 
