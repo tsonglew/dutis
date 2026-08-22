@@ -30,6 +30,12 @@ Use Dutis for macOS Launch Services associations. Preserve its
 7. Verify with `dutis get`, then use `dutis audit` when the user needs the full
    local record.
 
+When the user requests integration with another local tool, prefer the global
+`--event-log` or `--event-command` sink. Treat an event command as executable
+code: require a user-chosen trusted absolute path, and never generate or enable
+one implicitly. Events may contain application paths, bundle IDs, requester
+identity, and complete plans, but never approval tokens.
+
 For monitoring requests, use `dutis_drift` or `dutis watch <config> --once`
 first. Explain whether the report is `in_sync`, `drift_detected`, or
 `unresolved`. Do not enable `--remediate` or install a remediating LaunchAgent

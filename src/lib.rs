@@ -3,6 +3,7 @@ pub mod application;
 pub mod association;
 pub mod config;
 pub mod drift;
+pub mod events;
 pub mod governance;
 pub mod launch_agent;
 pub mod mcp;

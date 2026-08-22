@@ -6,10 +6,16 @@ use std::path::PathBuf;
 #[command(
     name = "dutis",
     version,
-    about = "Manage default macOS applications by file extension",
+    about = "Manage default macOS Launch Services handlers",
     after_help = "Run without a command to start interactive mode.\nMore information: https://github.com/tsonglew/dutis"
 )]
 pub struct Cli {
+    /// Append versioned drift and mutation events to this JSONL file
+    #[arg(long, global = true, value_name = "PATH")]
+    pub event_log: Option<PathBuf>,
+    /// Pipe each event as JSON to this executable command
+    #[arg(long, global = true, value_name = "PATH")]
+    pub event_command: Option<PathBuf>,
     #[command(subcommand)]
     pub command: Option<CliCommand>,
 }
@@ -136,7 +142,7 @@ pub enum SnapshotCommand {
 
 #[derive(Debug, Args)]
 pub struct SnapshotCreateArgs {
-    /// Limit the snapshot to extensions in this configuration
+    /// Limit the snapshot to association targets in this configuration
     #[arg(long)]
     pub config: Option<PathBuf>,
     /// Emit stable machine-readable JSON
@@ -397,6 +403,26 @@ mod tests {
                 ..
             }))
         ));
+    }
+
+    #[test]
+    fn parses_global_event_sinks_before_or_after_subcommands() {
+        let cli = Cli::try_parse_from([
+            "dutis",
+            "--event-log",
+            "events.jsonl",
+            "watch",
+            "dutis.toml",
+            "--once",
+            "--event-command",
+            "/usr/local/bin/event-sink",
+        ])
+        .unwrap();
+        assert_eq!(cli.event_log, Some(PathBuf::from("events.jsonl")));
+        assert_eq!(
+            cli.event_command,
+            Some(PathBuf::from("/usr/local/bin/event-sink"))
+        );
     }
 
     #[test]

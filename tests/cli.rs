@@ -35,6 +35,27 @@ fn json_usage_errors_have_a_stable_envelope_and_exit_code() {
 }
 
 #[test]
+fn invalid_global_event_command_has_a_stable_usage_error() {
+    let output = dutis()
+        .args([
+            "--event-command",
+            "/definitely/missing/dutis-event-sink",
+            "doctor",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["command"], "doctor");
+    assert_eq!(response["error"]["kind"], "usage");
+    assert!(response["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("event command"));
+}
+
+#[test]
 fn set_requires_confirmation_before_scanning_or_mutating() {
     let output = dutis()
         .args(["set", "md", "com.example.Editor", "--json"])
@@ -266,6 +287,7 @@ fn typed_config_dry_run_and_apply_cover_every_duti_argument_shape() {
     let calls = root.join("duti-calls.log");
     let fake_state = root.join("applied");
     let state = root.join("state");
+    let events = root.join("events.jsonl");
     let configure = |command: &mut Command| {
         command
             .env("PATH", &bin)
@@ -312,6 +334,8 @@ fn typed_config_dry_run_and_apply_cover_every_duti_argument_shape() {
             "integration-test",
             "--yes",
             "--json",
+            "--event-log",
+            events.to_str().unwrap(),
         ])
         .output()
         .unwrap();
@@ -339,6 +363,15 @@ fn typed_config_dry_run_and_apply_cover_every_duti_argument_shape() {
         .any(|line| line == "-s com.apple.TextEdit https"));
     assert_eq!(fs::read_dir(state.join("snapshots")).unwrap().count(), 1);
     assert_eq!(fs::read_dir(state.join("audit")).unwrap().count(), 1);
+    let events = fs::read_to_string(events)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["event_type"], "mutation.pending");
+    assert_eq!(events[1]["event_type"], "mutation.completed");
+    assert_eq!(events[1]["payload"]["outcome"], "succeeded");
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -401,12 +434,31 @@ fn watch_once_reports_drift_without_invoking_duti_set() {
     )
     .unwrap();
     let calls = root.join("duti-calls.log");
+    let events = root.join("events.jsonl");
+    let command_events = root.join("command-events.jsonl");
+    let event_command = root.join("event-sink.sh");
+    fs::write(
+        &event_command,
+        "#!/bin/sh\n/bin/cat >> \"$DUTIS_TEST_EVENT_OUTPUT\"\nprintf 'discarded command output\\n'\n",
+    )
+    .unwrap();
+    fs::set_permissions(&event_command, fs::Permissions::from_mode(0o700)).unwrap();
 
     let output = dutis()
         .env("PATH", &bin)
         .env("DUTI_CALL_LOG", &calls)
         .env("DUTIS_STATE_DIR", root.join("state"))
-        .args(["watch", config.to_str().unwrap(), "--once", "--json"])
+        .env("DUTIS_TEST_EVENT_OUTPUT", &command_events)
+        .args([
+            "watch",
+            config.to_str().unwrap(),
+            "--once",
+            "--json",
+            "--event-log",
+            events.to_str().unwrap(),
+            "--event-command",
+            event_command.to_str().unwrap(),
+        ])
         .output()
         .unwrap();
     assert!(
@@ -421,6 +473,14 @@ fn watch_once_reports_drift_without_invoking_duti_set() {
     assert!(calls.lines().any(|line| line == "-V"));
     assert!(calls.lines().any(|line| line == "-x md"));
     assert!(!calls.lines().any(|line| line.starts_with("-s ")));
+    let event: Value = serde_json::from_str(fs::read_to_string(events).unwrap().trim()).unwrap();
+    assert_eq!(event["schema_version"], 1);
+    assert_eq!(event["event_type"], "drift.checked");
+    assert_eq!(event["source"], "watcher");
+    assert_eq!(event["payload"]["state"], "drift_detected");
+    let command_event: Value =
+        serde_json::from_str(fs::read_to_string(command_events).unwrap().trim()).unwrap();
+    assert_eq!(command_event, event);
     fs::remove_dir_all(root).unwrap();
 }
 

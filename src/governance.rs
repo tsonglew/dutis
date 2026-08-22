@@ -1,5 +1,6 @@
 use crate::application::normalize_extension;
 use crate::association::{AssociationKind, AssociationTarget, HandlerRole};
+use crate::events::{emit_best_effort, EventSource, EventType};
 use crate::planner::{ApplyReport, AssociationPlan, PlanAction};
 use crate::snapshot::{apply_plan_with_snapshot, SnapshotReason, SnapshotStore};
 use anyhow::{anyhow, bail, Context, Result};
@@ -611,6 +612,7 @@ where
             audit_id: Some(record.id.clone()),
             violations: assessment.violations.clone(),
         })?;
+        emit_best_effort(EventType::MutationDenied, EventSource::Governance, &record);
         return Err(GovernanceError {
             kind: GovernanceErrorKind::PolicyDenied,
             message: format!(
@@ -628,6 +630,7 @@ where
         audit_id: Some(record.id.clone()),
         violations: Vec::new(),
     })?;
+    emit_best_effort(EventType::MutationPending, EventSource::Governance, &record);
 
     let protected = match apply_plan_with_snapshot(snapshot_store, plan, reason, apply) {
         Ok(protected) => protected,
@@ -635,6 +638,7 @@ where
             record.outcome = AuditOutcome::FailedBeforeMutation;
             record.error = Some(format!("{error:#}"));
             let _ = audit_store.save(&record);
+            emit_best_effort(EventType::MutationFailed, EventSource::Governance, &record);
             return Err(GovernanceError {
                 kind: GovernanceErrorKind::SnapshotFailed,
                 message: format!(
@@ -671,6 +675,11 @@ where
         audit_id: Some(record.id.clone()),
         violations: Vec::new(),
     })?;
+    emit_best_effort(
+        EventType::MutationCompleted,
+        EventSource::Governance,
+        &record,
+    );
 
     Ok(GovernedMutation {
         audit_id: record.id,

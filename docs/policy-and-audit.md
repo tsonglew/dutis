@@ -121,3 +121,9 @@ safety snapshot ID, per-entry result, and verification summary. Dutis atomically
 writes a `pending` record before a mutation. If policy denies the request, it
 writes a `denied` record and never invokes the system mutation. If audit storage
 cannot be prepared, the mutation is refused.
+
+Configured [event sinks](event-sinks.md) receive the persisted mutation
+lifecycle as `mutation.pending`, `mutation.denied`, `mutation.failed`, and
+`mutation.completed` events. Event delivery is downstream of the safety
+boundary: a sink failure is reported as a warning and cannot turn an audited
+successful mutation into a failure or authorize a denied mutation.
