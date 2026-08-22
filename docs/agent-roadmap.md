@@ -50,6 +50,8 @@ Acceptance criteria:
 
 ## Phase 2: Declarative configuration
 
+Status: implemented for v2.6.0
+
 Add a checked-in `dutis.toml` format and idempotent workflows:
 
 ```text
@@ -132,8 +134,8 @@ pipeline across all association types.
 
 ## Near-term engineering sequence
 
-1. Finish and release Phase 1 as the first stable automation contract.
-2. Extract the catalog and system adapter into a library crate before Phase 2.
-3. Write the configuration and plan schemas before implementing `apply`.
-4. Build rollback before exposing any autonomous or continuously running mode.
-5. Add MCP and skills only on top of the tested CLI/library semantics.
+1. Release Phase 2 and validate declarative apply across representative macOS
+   application sets.
+2. Build snapshots and rollback before exposing any autonomous or continuously
+   running mode.
+3. Add MCP and skills only on top of the tested CLI/library semantics.

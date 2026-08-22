@@ -17,6 +17,7 @@ A comprehensive Rust application for viewing file extensions supported by macOS 
 - 🧩 **Modern Metadata Support**: Reads legacy document types and modern UTI declarations
 - ✅ **Verified Updates**: Verifies the selected default application after applying it
 - 🤖 **Agent-ready CLI**: Stable JSON output, dry runs, deterministic selectors, and explicit exit codes
+- 📋 **Declarative Configuration**: Plan, diff, apply, and verify a versioned TOML policy
 
 ## Installation
 
@@ -96,10 +97,27 @@ dutis set md com.microsoft.VSCode --yes
 dutis doctor --json
 ```
 
+Manage several associations as one reviewed, idempotent plan:
+
+```bash
+cp dutis.example.toml dutis.toml
+dutis plan dutis.toml --json
+dutis diff dutis.toml
+dutis apply dutis.toml --dry-run
+dutis apply dutis.toml --plan-digest <reviewed-digest> --yes
+```
+
+`apply` rebuilds the plan immediately before changing the system and rejects a
+stale digest. Every change is verified, unchanged entries are skipped, and
+partial failures include a result for every association. See the
+[declarative configuration guide](docs/declarative-configuration.md) for the
+schema and safety contract.
+
 Applications can be selected by exact bundle ID, exact application path, or an
 unambiguous application name. JSON responses use API version `1`. Exit codes are
 `0` for success, `2` for usage errors, `3` for no match, `4` for ambiguous
 selectors, `5` for an unavailable dependency, and `6` for operation failure.
+Declarative apply also uses `7` for a stale plan and `8` for partial failure.
 
 The product and engineering sequence for declarative configuration, rollback,
 MCP, agent policies, profiles, and drift detection is documented in the
@@ -134,6 +152,8 @@ MCP, agent policies, profiles, and drift detection is documented in the
 - **plist**: Native XML and binary plist parsing
 - **clap**: Command parsing and generated help
 - **serde / serde_json**: Versioned machine-readable output
+- **toml**: Strict declarative configuration parsing
+- **sha2**: Deterministic reviewed-plan digests
 
 ## Releases
 

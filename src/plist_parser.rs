@@ -3,6 +3,7 @@ use plist::{Dictionary, Value};
 use std::collections::BTreeSet;
 use std::path::Path;
 
+#[derive(Default)]
 pub struct PlistParser;
 
 #[derive(Debug, Clone, Eq, PartialEq)]

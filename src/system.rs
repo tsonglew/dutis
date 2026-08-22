@@ -36,6 +36,10 @@ pub fn duti_version() -> Result<String> {
 
 pub fn get_default_app(extension: &str) -> Result<Option<DefaultApplication>> {
     duti_version()?;
+    query_default_app(extension)
+}
+
+pub fn query_default_app(extension: &str) -> Result<Option<DefaultApplication>> {
     let output = Command::new("duti")
         .args(["-x", extension])
         .output()
@@ -65,7 +69,7 @@ pub fn set_default_app(extension: &str, bundle_id: &str) -> Result<()> {
         );
     }
 
-    let actual = get_default_app(extension)?
+    let actual = query_default_app(extension)?
         .ok_or_else(|| anyhow!("verification found no default application for .{extension}"))?;
     if actual.bundle_id != bundle_id {
         bail!(

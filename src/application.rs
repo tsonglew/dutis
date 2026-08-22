@@ -1,6 +1,6 @@
 use crate::app_scanner::AppScanner;
 use crate::plist_parser::PlistParser;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -106,6 +106,20 @@ pub fn resolve_app<'a>(applications: &'a [Application], selector: &str) -> Vec<&
         .collect()
 }
 
+pub fn normalize_extension(input: &str) -> Result<String> {
+    let extension = input.trim().trim_start_matches('.').to_ascii_lowercase();
+    if extension.is_empty() {
+        bail!("please enter a valid file extension");
+    }
+    if !extension
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '_'))
+    {
+        bail!("file extensions may only contain letters, numbers, '+', '-' or '_'");
+    }
+    Ok(extension)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,5 +160,13 @@ mod tests {
             ),
         ];
         assert_eq!(resolve_app(&applications, "Editor").len(), 2);
+    }
+
+    #[test]
+    fn normalizes_and_validates_extensions() {
+        assert_eq!(normalize_extension(" .TXT ").unwrap(), "txt");
+        assert_eq!(normalize_extension("c++").unwrap(), "c++");
+        assert!(normalize_extension("../../txt").is_err());
+        assert!(normalize_extension("...").is_err());
     }
 }

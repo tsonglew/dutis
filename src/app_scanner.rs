@@ -7,6 +7,7 @@ pub struct InstalledApplication {
     pub path: PathBuf,
 }
 
+#[derive(Default)]
 pub struct AppScanner;
 
 impl AppScanner {

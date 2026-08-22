@@ -1,19 +1,23 @@
-use anyhow::{bail, Context, Result};
-use application::{
-    find_apps_for_extension, find_fuzzy_matches, resolve_app, Application, ApplicationCatalog,
-};
+use anyhow::{Context, Result};
 use clap::Parser;
-use cli::{Cli, CliCommand, ExtensionArgs, OutputArgs, SetArgs};
+use cli::{ApplyArgs, Cli, CliCommand, ConfigArgs, ExtensionArgs, OutputArgs, SetArgs};
 use colored::*;
+use dutis::application::{
+    find_apps_for_extension, find_fuzzy_matches, normalize_extension, resolve_app, Application,
+    ApplicationCatalog,
+};
+use dutis::config::DutisConfig;
+use dutis::planner::{
+    apply_plan, build_plan, ApplyReport, AssociationPlan, PlanAction, PlanEntry, PlanSummary,
+};
+use dutis::system;
 use serde::Serialize;
+use serde_json::Value;
 use std::io::{self, Write};
+use std::path::Path;
 use std::process::ExitCode;
 
-mod app_scanner;
-mod application;
 mod cli;
-mod plist_parser;
-mod system;
 
 const API_VERSION: &str = "1";
 
@@ -22,6 +26,7 @@ struct CliError {
     code: u8,
     kind: &'static str,
     message: String,
+    details: Option<Value>,
 }
 
 impl CliError {
@@ -45,12 +50,26 @@ impl CliError {
         Self::new(6, "operation_failed", message)
     }
 
+    fn stale_plan(message: impl Into<String>, details: Value) -> Self {
+        Self::new(7, "stale_plan", message).with_details(details)
+    }
+
+    fn partial_failure(message: impl Into<String>, details: Value) -> Self {
+        Self::new(8, "partial_failure", message).with_details(details)
+    }
+
     fn new(code: u8, kind: &'static str, message: impl Into<String>) -> Self {
         Self {
             code,
             kind,
             message: message.into(),
+            details: None,
         }
+    }
+
+    fn with_details(mut self, details: Value) -> Self {
+        self.details = Some(details);
+        self
     }
 }
 
@@ -73,6 +92,8 @@ struct JsonError<'a> {
     code: u8,
     kind: &'static str,
     message: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    details: Option<&'a Value>,
 }
 
 #[derive(Serialize)]
@@ -105,6 +126,13 @@ struct DoctorResult {
     ready_for_changes: bool,
 }
 
+#[derive(Serialize)]
+struct DiffResult<'a> {
+    plan_digest: &'a str,
+    summary: &'a PlanSummary,
+    entries: Vec<&'a PlanEntry>,
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let command_name = cli
@@ -125,6 +153,7 @@ fn main() -> ExitCode {
                         code: error.code,
                         kind: error.kind,
                         message: &error.message,
+                        details: error.details.as_ref(),
                     },
                 };
                 if let Err(serialization_error) = write_json(&response) {
@@ -145,6 +174,9 @@ fn dispatch(command: Option<CliCommand>) -> Result<(), CliError> {
         Some(CliCommand::Query(args)) => run_query(args),
         Some(CliCommand::Get(args)) => run_get(args),
         Some(CliCommand::Set(args)) => run_set(args),
+        Some(CliCommand::Plan(args)) => run_plan(args),
+        Some(CliCommand::Diff(args)) => run_diff(args),
+        Some(CliCommand::Apply(args)) => run_apply(args),
         Some(CliCommand::Doctor(args)) => run_doctor(args),
     }
 }
@@ -155,6 +187,9 @@ fn command_name(command: &CliCommand) -> &'static str {
         CliCommand::Query(_) => "query",
         CliCommand::Get(_) => "get",
         CliCommand::Set(_) => "set",
+        CliCommand::Plan(_) => "plan",
+        CliCommand::Diff(_) => "diff",
+        CliCommand::Apply(_) => "apply",
         CliCommand::Doctor(_) => "doctor",
     }
 }
@@ -164,6 +199,8 @@ fn command_uses_json(command: &CliCommand) -> bool {
         CliCommand::List(args) | CliCommand::Doctor(args) => args.json,
         CliCommand::Query(args) | CliCommand::Get(args) => args.json,
         CliCommand::Set(args) => args.json,
+        CliCommand::Plan(args) | CliCommand::Diff(args) => args.json,
+        CliCommand::Apply(args) => args.json,
     }
 }
 
@@ -332,6 +369,194 @@ fn run_set(args: SetArgs) -> Result<(), CliError> {
         );
     }
     Ok(())
+}
+
+fn run_plan(args: ConfigArgs) -> Result<(), CliError> {
+    let plan = build_declarative_plan(&args.config)?;
+    if args.json {
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "plan",
+            data: plan,
+        })?;
+    } else {
+        print_plan(&plan, false);
+    }
+    Ok(())
+}
+
+fn run_diff(args: ConfigArgs) -> Result<(), CliError> {
+    let plan = build_declarative_plan(&args.config)?;
+    if args.json {
+        let entries = plan
+            .entries
+            .iter()
+            .filter(|entry| entry.action != PlanAction::Unchanged)
+            .collect();
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "diff",
+            data: DiffResult {
+                plan_digest: &plan.digest,
+                summary: &plan.summary,
+                entries,
+            },
+        })?;
+    } else {
+        print_plan(&plan, true);
+    }
+    Ok(())
+}
+
+fn run_apply(args: ApplyArgs) -> Result<(), CliError> {
+    if !args.dry_run && !args.yes {
+        return Err(CliError::usage(
+            "refusing to apply configuration without --yes; use --dry-run to preview",
+        ));
+    }
+    if !args.dry_run && args.plan_digest.is_none() {
+        return Err(CliError::usage(
+            "--plan-digest is required when applying changes",
+        ));
+    }
+
+    let plan = build_declarative_plan(&args.config)?;
+    if args.dry_run {
+        if args.json {
+            write_json(&JsonEnvelope {
+                api_version: API_VERSION,
+                command: "apply",
+                data: plan,
+            })?;
+        } else {
+            println!("Dry run; no associations will be changed.\n");
+            print_plan(&plan, false);
+        }
+        return Ok(());
+    }
+
+    if plan.has_unresolved() {
+        let details = serde_json::to_value(&plan)
+            .map_err(|error| CliError::operation(format!("failed to serialize plan: {error}")))?;
+        if !args.json {
+            print_plan(&plan, false);
+        }
+        return Err(CliError::not_found(format!(
+            "plan contains {} unresolved association(s); no changes were made",
+            plan.summary.unresolved
+        ))
+        .with_details(details));
+    }
+
+    let reviewed_digest = args
+        .plan_digest
+        .as_deref()
+        .ok_or_else(|| CliError::usage("--plan-digest is required when applying changes"))?;
+    if reviewed_digest != plan.digest {
+        return Err(CliError::stale_plan(
+            "current state no longer matches the reviewed plan; run `dutis plan` again",
+            serde_json::json!({
+                "reviewed_digest": reviewed_digest,
+                "current_digest": plan.digest,
+            }),
+        ));
+    }
+
+    let report = apply_plan(&plan, system::set_default_app);
+    if report.failed > 0 {
+        let details = serde_json::to_value(&report)
+            .map_err(|error| CliError::operation(format!("failed to serialize report: {error}")))?;
+        if !args.json {
+            print_apply_report(&report);
+        }
+        return Err(CliError::partial_failure(
+            format!(
+                "{} association(s) failed; {} applied and {} skipped",
+                report.failed, report.applied, report.skipped
+            ),
+            details,
+        ));
+    }
+
+    if args.json {
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "apply",
+            data: report,
+        })?;
+    } else {
+        print_apply_report(&report);
+    }
+    Ok(())
+}
+
+fn build_declarative_plan(path: &Path) -> Result<AssociationPlan, CliError> {
+    let config = DutisConfig::load(path).map_err(|error| CliError::usage(format!("{error:#}")))?;
+    let catalog = scan_catalog()?;
+    report_metadata_failures(catalog.metadata_failures);
+    system::duti_version().map_err(|error| CliError::dependency(format!("{error:#}")))?;
+    build_plan(&config, &catalog.applications, system::query_default_app)
+        .map_err(|error| CliError::operation(format!("failed to inspect current state: {error:#}")))
+}
+
+fn print_plan(plan: &AssociationPlan, changes_only: bool) {
+    for entry in &plan.entries {
+        if changes_only && entry.action == PlanAction::Unchanged {
+            continue;
+        }
+        match entry.action {
+            PlanAction::Change => {
+                let current = entry
+                    .current
+                    .as_ref()
+                    .map(|app| app.bundle_id.as_str())
+                    .unwrap_or("<none>");
+                let target = entry
+                    .target
+                    .as_ref()
+                    .map(|app| app.bundle_id.as_str())
+                    .unwrap_or("<unresolved>");
+                println!("CHANGE    .{}: {} -> {}", entry.extension, current, target);
+            }
+            PlanAction::Unchanged => {
+                let bundle_id = entry
+                    .target
+                    .as_ref()
+                    .map(|app| app.bundle_id.as_str())
+                    .unwrap_or("<unknown>");
+                println!("UNCHANGED .{}: {}", entry.extension, bundle_id);
+            }
+            PlanAction::Unresolved => println!(
+                "UNRESOLVED .{}: {}",
+                entry.extension,
+                entry.reason.as_deref().unwrap_or("unknown reason")
+            ),
+        }
+    }
+    println!(
+        "\nSummary: {} change(s), {} unchanged, {} unresolved",
+        plan.summary.changes, plan.summary.unchanged, plan.summary.unresolved
+    );
+    println!("Plan digest: {}", plan.digest);
+}
+
+fn print_apply_report(report: &ApplyReport) {
+    for result in &report.results {
+        println!(
+            "{:?} .{}{}",
+            result.status,
+            result.extension,
+            result
+                .error
+                .as_ref()
+                .map(|error| format!(": {error}"))
+                .unwrap_or_default()
+        );
+    }
+    println!(
+        "\nApplied: {}, skipped: {}, failed: {}",
+        report.applied, report.skipped, report.failed
+    );
 }
 
 fn apply_or_preview<F>(
@@ -558,20 +783,6 @@ fn read_prompt(prompt: &str) -> Result<Option<String>> {
     Ok((bytes_read != 0).then_some(input))
 }
 
-fn normalize_extension(input: &str) -> Result<String> {
-    let extension = input.trim().trim_start_matches('.').to_ascii_lowercase();
-    if extension.is_empty() {
-        bail!("please enter a valid file extension");
-    }
-    if !extension
-        .chars()
-        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '_'))
-    {
-        bail!("file extensions may only contain letters, numbers, '+', '-' or '_'");
-    }
-    Ok(extension)
-}
-
 fn display_debug_info(applications: &[Application]) {
     let with_extensions = applications
         .iter()
@@ -681,14 +892,6 @@ mod tests {
             bundle_id: Some(format!("example.{name}")),
             extensions: extensions.iter().map(|value| (*value).to_owned()).collect(),
         }
-    }
-
-    #[test]
-    fn normalizes_extensions() {
-        assert_eq!(normalize_extension(" .TXT ").unwrap(), "txt");
-        assert_eq!(normalize_extension("c++").unwrap(), "c++");
-        assert!(normalize_extension("../../txt").is_err());
-        assert!(normalize_extension("...").is_err());
     }
 
     #[test]
