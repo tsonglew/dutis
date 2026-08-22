@@ -29,6 +29,12 @@ pub enum CliCommand {
     Diff(ConfigArgs),
     /// Apply and verify a previously reviewed declarative plan
     Apply(ApplyArgs),
+    /// Create a local snapshot of current associations
+    Snapshot(SnapshotArgs),
+    /// List locally stored snapshots
+    History(OutputArgs),
+    /// Restore associations from a local snapshot
+    Rollback(RollbackArgs),
     /// Check whether dutis and its runtime dependency are ready
     Doctor(OutputArgs),
 }
@@ -86,6 +92,43 @@ pub struct ApplyArgs {
     #[arg(long)]
     pub dry_run: bool,
     /// Confirm a non-interactive system change
+    #[arg(long)]
+    pub yes: bool,
+    /// Emit stable machine-readable JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct SnapshotArgs {
+    #[command(subcommand)]
+    pub command: SnapshotCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SnapshotCommand {
+    /// Capture current associations without changing the system
+    Create(SnapshotCreateArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SnapshotCreateArgs {
+    /// Limit the snapshot to extensions in this configuration
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+    /// Emit stable machine-readable JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RollbackArgs {
+    /// Snapshot identifier shown by the history command
+    pub snapshot_id: String,
+    /// Build and display the rollback plan without changing the system
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Confirm a non-interactive rollback
     #[arg(long)]
     pub yes: bool,
     /// Emit stable machine-readable JSON
@@ -154,5 +197,29 @@ mod tests {
                 .is_ok()
         );
         assert!(Cli::try_parse_from(["dutis", "apply", "dutis.toml", "--dry-run"]).is_ok());
+    }
+
+    #[test]
+    fn parses_snapshot_history_and_rollback_commands() {
+        let cli = Cli::try_parse_from([
+            "dutis",
+            "snapshot",
+            "create",
+            "--config",
+            "dutis.toml",
+            "--json",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(CliCommand::Snapshot(SnapshotArgs {
+                command: SnapshotCommand::Create(SnapshotCreateArgs { json: true, .. })
+            }))
+        ));
+        assert!(Cli::try_parse_from(["dutis", "history", "--json"]).is_ok());
+        assert!(
+            Cli::try_parse_from(["dutis", "rollback", "snapshot-id", "--dry-run", "--json"])
+                .is_ok()
+        );
     }
 }

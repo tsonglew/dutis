@@ -1,5 +1,6 @@
 use serde_json::Value;
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn dutis() -> Command {
     Command::new(env!("CARGO_BIN_EXE_dutis"))
@@ -60,4 +61,37 @@ fn apply_requires_a_reviewed_digest_before_reading_configuration() {
         .as_str()
         .unwrap()
         .contains("--plan-digest"));
+}
+
+#[test]
+fn rollback_requires_confirmation_before_reading_snapshot_storage() {
+    let output = dutis()
+        .args(["rollback", "missing-snapshot", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stderr.is_empty());
+
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["command"], "rollback");
+    assert_eq!(response["error"]["kind"], "usage");
+}
+
+#[test]
+fn history_is_empty_for_an_isolated_state_directory() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let state =
+        std::env::temp_dir().join(format!("dutis-cli-history-{}-{unique}", std::process::id()));
+    let output = dutis()
+        .env("DUTIS_STATE_DIR", state)
+        .args(["history", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["command"], "history");
+    assert_eq!(response["data"].as_array().unwrap().len(), 0);
 }

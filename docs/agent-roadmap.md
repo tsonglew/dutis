@@ -72,6 +72,8 @@ Acceptance criteria:
 
 ## Phase 3: Snapshots, history, and rollback
 
+Status: implemented for v2.7.0
+
 Capture associations before every multi-item apply and expose:
 
 ```text
@@ -134,8 +136,7 @@ pipeline across all association types.
 
 ## Near-term engineering sequence
 
-1. Release Phase 2 and validate declarative apply across representative macOS
+1. Release Phase 3 and validate snapshot recovery across representative macOS
    application sets.
-2. Build snapshots and rollback before exposing any autonomous or continuously
-   running mode.
-3. Add MCP and skills only on top of the tested CLI/library semantics.
+2. Expose the stable read, plan, apply, and rollback core through MCP.
+3. Add agent skills and policy controls before any autonomous mode.
