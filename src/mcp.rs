@@ -5,6 +5,7 @@ use crate::governance::{
     MutationChannel, MutationOperation, MutationRequest,
 };
 use crate::planner::{build_plan, AssociationPlan};
+use crate::profiles::{find_profile, profiles, recommend_profile};
 use crate::snapshot::{build_rollback_plan, SnapshotReason, SnapshotStore};
 use crate::system;
 use anyhow::{anyhow, Context, Result};
@@ -75,6 +76,9 @@ pub struct McpAuditEvent {
 
 trait McpBackend {
     fn list(&mut self) -> Result<Value>;
+    fn profiles(&mut self) -> Result<Value>;
+    fn profile(&mut self, name: &str) -> Result<Value>;
+    fn recommend(&mut self, name: &str) -> Result<Value>;
     fn query(&mut self, extension: &str) -> Result<Value>;
     fn get(&mut self, extension: &str) -> Result<Value>;
     fn plan(&mut self, config: &DutisConfig) -> Result<AssociationPlan>;
@@ -99,6 +103,30 @@ impl McpBackend for SystemBackend {
         Ok(json!({
             "applications": catalog.applications,
             "metadata_failures": catalog.metadata_failures,
+        }))
+    }
+
+    fn profiles(&mut self) -> Result<Value> {
+        serde_json::to_value(profiles()).context("failed to serialize built-in profiles")
+    }
+
+    fn profile(&mut self, name: &str) -> Result<Value> {
+        let profile = find_profile(name).ok_or_else(|| anyhow!("unknown profile '{name}'"))?;
+        serde_json::to_value(profile).context("failed to serialize profile")
+    }
+
+    fn recommend(&mut self, name: &str) -> Result<Value> {
+        let profile = find_profile(name).ok_or_else(|| anyhow!("unknown profile '{name}'"))?;
+        let catalog = ApplicationCatalog::scan()?;
+        system::duti_version()?;
+        let recommendation =
+            recommend_profile(&profile, &catalog.applications, system::query_default_app)?;
+        let policy = LoadedPolicy::from_environment()?;
+        Ok(json!({
+            "metadata_failures": catalog.metadata_failures,
+            "assessment": policy.policy.assess(&recommendation.plan),
+            "policy": policy.summary(),
+            "recommendation": recommendation,
         }))
     }
 
@@ -287,6 +315,27 @@ impl<B: McpBackend> McpServer<B> {
     ) -> std::result::Result<Value, ToolError> {
         match name {
             "dutis_list" => self.backend.list().map_err(operation_error),
+            "dutis_profiles" => self.backend.profiles().map_err(operation_error),
+            "dutis_profile" => {
+                let profile = argument_string(arguments, "profile")?;
+                if find_profile(profile).is_none() {
+                    return Err(ToolError::new(
+                        "not_found",
+                        format!("unknown profile '{profile}'"),
+                    ));
+                }
+                self.backend.profile(profile).map_err(operation_error)
+            }
+            "dutis_recommend" => {
+                let profile = argument_string(arguments, "profile")?;
+                if find_profile(profile).is_none() {
+                    return Err(ToolError::new(
+                        "not_found",
+                        format!("unknown profile '{profile}'"),
+                    ));
+                }
+                self.backend.recommend(profile).map_err(operation_error)
+            }
             "dutis_query" => {
                 let extension = argument_string(arguments, "extension")?;
                 let extension = normalize_extension(extension)
@@ -577,6 +626,12 @@ fn tool_definitions(allow_writes: bool) -> Vec<Value> {
         "required": ["snapshot_id"],
         "additionalProperties": false,
     });
+    let profile_schema = json!({
+        "type": "object",
+        "properties": {"profile": {"type": "string", "minLength": 1}},
+        "required": ["profile"],
+        "additionalProperties": false,
+    });
     let read_annotations = json!({
         "readOnlyHint": true,
         "destructiveHint": false,
@@ -588,6 +643,24 @@ fn tool_definitions(allow_writes: bool) -> Vec<Value> {
             "dutis_list",
             "List installed macOS applications and their declared file extensions.",
             empty_schema.clone(),
+            read_annotations.clone(),
+        ),
+        tool_definition(
+            "dutis_profiles",
+            "List built-in association profiles and their ordered application candidates.",
+            empty_schema.clone(),
+            read_annotations.clone(),
+        ),
+        tool_definition(
+            "dutis_profile",
+            "Inspect one built-in association profile without changing the system.",
+            profile_schema.clone(),
+            read_annotations.clone(),
+        ),
+        tool_definition(
+            "dutis_recommend",
+            "Generate an explainable profile proposal, deterministic plan, and policy assessment without changing the system.",
+            profile_schema,
             read_annotations.clone(),
         ),
         tool_definition(
@@ -784,6 +857,18 @@ mod tests {
             Ok(json!({"applications": []}))
         }
 
+        fn profiles(&mut self) -> Result<Value> {
+            serde_json::to_value(profiles()).map_err(Into::into)
+        }
+
+        fn profile(&mut self, name: &str) -> Result<Value> {
+            serde_json::to_value(find_profile(name)).map_err(Into::into)
+        }
+
+        fn recommend(&mut self, name: &str) -> Result<Value> {
+            Ok(json!({"profile": name, "proposal_only": true}))
+        }
+
         fn query(&mut self, extension: &str) -> Result<Value> {
             Ok(json!({"extension": extension, "applications": []}))
         }
@@ -869,10 +954,49 @@ mod tests {
             .map(|tool| tool["name"].as_str().unwrap())
             .collect::<Vec<_>>();
         assert!(names.contains(&"dutis_diff"));
+        assert!(names.contains(&"dutis_profiles"));
+        assert!(names.contains(&"dutis_profile"));
+        assert!(names.contains(&"dutis_recommend"));
         assert!(names.contains(&"dutis_policy_check"));
         assert!(names.contains(&"dutis_audit"));
         assert!(!names.contains(&"dutis_apply"));
         assert!(!names.contains(&"dutis_rollback"));
+    }
+
+    #[test]
+    fn profile_tools_return_proposals_and_stable_not_found_errors() {
+        let mut server = McpServer::new(FakeBackend::new(), McpOptions::read_only());
+        let profile = server.handle(request(
+            1,
+            "tools/call",
+            json!({"name": "dutis_profile", "arguments": {"profile": "minimal"}}),
+        ));
+        assert_eq!(
+            profile.response.unwrap()["result"]["structuredContent"]["data"]["name"],
+            "minimal"
+        );
+
+        let recommendation = server.handle(request(
+            2,
+            "tools/call",
+            json!({"name": "dutis_recommend", "arguments": {"profile": "developer"}}),
+        ));
+        assert_eq!(
+            recommendation.response.unwrap()["result"]["structuredContent"]["data"]
+                ["proposal_only"],
+            true
+        );
+        assert_eq!(recommendation.audit.unwrap().access, "read");
+
+        let missing = server.handle(request(
+            3,
+            "tools/call",
+            json!({"name": "dutis_recommend", "arguments": {"profile": "unknown"}}),
+        ));
+        assert_eq!(
+            missing.response.unwrap()["result"]["structuredContent"]["error"]["kind"],
+            "not_found"
+        );
     }
 
     #[test]

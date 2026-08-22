@@ -1,6 +1,6 @@
 # MCP server
 
-Dutis v2.8 exposes its inspected, planned, snapshotted, and verified association
+Dutis exposes its inspected, planned, snapshotted, and verified association
 workflow as a local Model Context Protocol server. The server uses JSON-RPC 2.0
 over stdio, so protocol messages are written only to stdout. Stable JSON audit
 events are written to stderr.
@@ -29,6 +29,9 @@ A typical MCP client configuration is:
 The server advertises these read tools:
 
 - `dutis_list`: discover installed applications and declared extensions.
+- `dutis_profiles`: list built-in profiles and ordered candidates.
+- `dutis_profile`: inspect one profile by its `profile` name.
+- `dutis_recommend`: generate an explainable proposal, plan digest, and policy assessment by `profile` name.
 - `dutis_query`: find installed handlers for one extension.
 - `dutis_get`: inspect the current default handler.
 - `dutis_diff`: parse inline versioned TOML and return a deterministic plan.
@@ -41,6 +44,11 @@ The server advertises these read tools:
 `dutis_diff` accepts `config_toml` rather than a filesystem path. This keeps the
 MCP surface independent from unrestricted file access and makes the exact input
 part of the reviewed tool call.
+
+Profile recommendations are also read-only. A recommendation is evidence, not
+approval: it does not register a mutation tool call or change an association.
+To use one, review its `proposed_toml`, rebuild it with `dutis_diff`, run
+`dutis_policy_check`, and follow the normal write approval flow.
 
 ## Enable writes explicitly
 

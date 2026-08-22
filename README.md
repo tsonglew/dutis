@@ -21,6 +21,7 @@ A comprehensive Rust application for viewing file extensions supported by macOS 
 - ↩️ **Snapshots and Rollback**: Persist pre-change state and restore it through the verified plan pipeline
 - 🔌 **Local MCP Server**: Give agents read-only discovery and planning tools with separately gated writes
 - 🛡️ **Policy and Audit**: Enforce local allowlists and approvals with durable, verified mutation records
+- 💡 **Explainable Profiles**: Generate evidence-backed developer, designer, media, or minimal proposals without changing the system
 
 ## Installation
 
@@ -148,6 +149,20 @@ dutis policy show --json
 dutis policy check dutis.toml --json
 dutis audit --json
 ```
+
+Explore built-in profiles and generate a read-only recommendation:
+
+```bash
+dutis profile list
+dutis profile show developer --json
+dutis recommend developer --json
+```
+
+Recommendations show ordered candidates, installed paths, declared extension
+support, the current handler, the proposed TOML, a deterministic plan digest,
+and the effective policy assessment. They never change system associations.
+Review [profiles and recommendations](docs/profiles-and-recommendations.md) for
+selection rules and the safe path from a proposal to an approved apply.
 
 All write paths enforce the same local policy before mutation and record the
 requester, reviewed plan, result, and verification. See the

@@ -39,6 +39,10 @@ pub enum CliCommand {
     Policy(PolicyArgs),
     /// List persistent local mutation audit records
     Audit(OutputArgs),
+    /// Inspect built-in association profiles
+    Profile(ProfileArgs),
+    /// Generate an explainable proposal from a built-in profile
+    Recommend(RecommendArgs),
     /// Run the local Model Context Protocol server over stdio
     Mcp(McpArgs),
     /// Check whether dutis and its runtime dependency are ready
@@ -175,6 +179,38 @@ pub struct PolicyCheckArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct ProfileArgs {
+    #[command(subcommand)]
+    pub command: ProfileCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProfileCommand {
+    /// List available built-in profiles
+    List(OutputArgs),
+    /// Show one profile and its ordered candidate applications
+    Show(ProfileShowArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ProfileShowArgs {
+    /// Built-in profile name
+    pub name: String,
+    /// Emit stable machine-readable JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RecommendArgs {
+    /// Built-in profile name
+    pub profile: String,
+    /// Emit stable machine-readable JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
 pub struct McpArgs {
     /// Register mutation tools; also requires DUTIS_MCP_APPROVAL_TOKEN
     #[arg(long)]
@@ -289,5 +325,12 @@ mod tests {
         assert!(Cli::try_parse_from(["dutis", "policy", "show", "--json"]).is_ok());
         assert!(Cli::try_parse_from(["dutis", "policy", "check", "dutis.toml", "--json"]).is_ok());
         assert!(Cli::try_parse_from(["dutis", "audit", "--json"]).is_ok());
+    }
+
+    #[test]
+    fn parses_profile_and_recommendation_commands() {
+        assert!(Cli::try_parse_from(["dutis", "profile", "list", "--json"]).is_ok());
+        assert!(Cli::try_parse_from(["dutis", "profile", "show", "developer", "--json"]).is_ok());
+        assert!(Cli::try_parse_from(["dutis", "recommend", "minimal", "--json"]).is_ok());
     }
 }
