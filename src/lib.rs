@@ -5,5 +5,6 @@ pub mod governance;
 pub mod mcp;
 pub mod planner;
 pub mod plist_parser;
+pub mod profiles;
 pub mod snapshot;
 pub mod system;

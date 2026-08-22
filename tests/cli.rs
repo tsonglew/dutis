@@ -99,6 +99,46 @@ fn history_is_empty_for_an_isolated_state_directory() {
 }
 
 #[test]
+fn profile_list_and_show_are_available_without_duti() {
+    let list = dutis()
+        .env("PATH", "")
+        .args(["profile", "list", "--json"])
+        .output()
+        .unwrap();
+    assert!(list.status.success());
+    let response: Value = serde_json::from_slice(&list.stdout).unwrap();
+    let names = response["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|profile| profile["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["developer", "designer", "media", "minimal"]);
+
+    let show = dutis()
+        .env("PATH", "")
+        .args(["profile", "show", "developer", "--json"])
+        .output()
+        .unwrap();
+    assert!(show.status.success());
+    let response: Value = serde_json::from_slice(&show.stdout).unwrap();
+    assert_eq!(response["data"]["name"], "developer");
+    assert!(response["data"]["associations"].as_array().unwrap().len() >= 5);
+}
+
+#[test]
+fn unknown_profile_has_stable_json_error() {
+    let output = dutis()
+        .args(["profile", "show", "unknown", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(3));
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["command"], "profile");
+    assert_eq!(response["error"]["kind"], "not_found");
+}
+
+#[test]
 fn mcp_stdio_initializes_and_advertises_read_only_tools() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -121,7 +161,8 @@ fn mcp_stdio_initializes_and_advertises_read_only_tools() {
         "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n",
         "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}\n",
         "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"dutis_history\",\"arguments\":{}}}\n",
-        "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"dutis_policy\",\"arguments\":{}}}\n"
+        "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"dutis_policy\",\"arguments\":{}}}\n",
+        "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"dutis_profile\",\"arguments\":{\"profile\":\"minimal\"}}}\n"
     );
     child
         .stdin
@@ -137,15 +178,21 @@ fn mcp_stdio_initializes_and_advertises_read_only_tools() {
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(responses.len(), 4);
+    assert_eq!(responses.len(), 5);
     assert_eq!(responses[0]["result"]["protocolVersion"], "2024-11-05");
     let tools = responses[1]["result"]["tools"].as_array().unwrap();
     assert!(tools.iter().any(|tool| tool["name"] == "dutis_diff"));
     assert!(tools.iter().any(|tool| tool["name"] == "dutis_policy"));
+    assert!(tools.iter().any(|tool| tool["name"] == "dutis_profiles"));
+    assert!(tools.iter().any(|tool| tool["name"] == "dutis_recommend"));
     assert!(!tools.iter().any(|tool| tool["name"] == "dutis_apply"));
     assert_eq!(
         responses[3]["result"]["structuredContent"]["data"]["approval_mode"],
         "explicit"
+    );
+    assert_eq!(
+        responses[4]["result"]["structuredContent"]["data"]["name"],
+        "minimal"
     );
 
     let audit = String::from_utf8(output.stderr)
@@ -153,10 +200,11 @@ fn mcp_stdio_initializes_and_advertises_read_only_tools() {
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(audit.len(), 2);
+    assert_eq!(audit.len(), 3);
     assert_eq!(audit[0]["schema_version"], 1);
     assert_eq!(audit[0]["tool"], "dutis_history");
     assert_eq!(audit[1]["tool"], "dutis_policy");
+    assert_eq!(audit[2]["tool"], "dutis_profile");
     assert!(audit.iter().all(|event| event["access"] == "read"));
 }
 

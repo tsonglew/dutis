@@ -122,9 +122,20 @@ Acceptance criteria:
 
 ## Phase 6: Profiles and recommendations
 
+Status: implemented for v2.10.0
+
 Add reusable profiles such as developer, designer, media, and minimal macOS,
 plus explainable recommendations based on installed applications and current
 associations. Recommendations remain proposals and include their evidence.
+
+Acceptance criteria:
+
+- Profiles can be inspected without `duti` or write permission.
+- Recommendations explain candidate priority, installation evidence, extension
+  support, current-handler retention, and unavailable choices.
+- Every proposal includes TOML, a deterministic plan digest, and the effective
+  policy assessment without changing system associations.
+- CLI and MCP expose the same read-only profile workflow.
 
 ## Phase 7: Drift detection
 
@@ -140,8 +151,7 @@ pipeline across all association types.
 
 ## Near-term engineering sequence
 
-1. Release Phase 5 and validate policy behavior across CLI, interactive, and
-   MCP mutation paths.
-2. Add explainable, opt-in profiles and recommendations.
-3. Design notification-first drift detection on top of the audited policy
+1. Release Phase 6 and validate profile evidence across common macOS setups.
+2. Design notification-first drift detection on top of the audited policy
    layer.
+3. Expand normalized planning to URL schemes, UTIs, and MIME types.

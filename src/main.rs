@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{
     ApplyArgs, Cli, CliCommand, ConfigArgs, ExtensionArgs, McpArgs, OutputArgs, PolicyArgs,
-    PolicyCheckArgs, PolicyCommand, RollbackArgs, SetArgs, SnapshotArgs, SnapshotCommand,
-    SnapshotCreateArgs,
+    PolicyCheckArgs, PolicyCommand, ProfileArgs, ProfileCommand, ProfileShowArgs, RecommendArgs,
+    RollbackArgs, SetArgs, SnapshotArgs, SnapshotCommand, SnapshotCreateArgs,
 };
 use colored::*;
 use dutis::application::{
@@ -19,6 +19,7 @@ use dutis::planner::{
     assemble_plan, build_plan, AssociationPlan, PlanAction, PlanEntry, PlanSummary,
     PlannedApplication,
 };
+use dutis::profiles::{find_profile, profiles, recommend_profile, ProfileRecommendation};
 use dutis::snapshot::{
     build_rollback_plan, capture_associations, SnapshotReason, SnapshotStore, SnapshotSummary,
 };
@@ -173,6 +174,14 @@ struct PolicyCheckResult<'a> {
     plan: &'a AssociationPlan,
 }
 
+#[derive(Serialize)]
+struct RecommendResult {
+    metadata_failures: usize,
+    recommendation: ProfileRecommendation,
+    policy: dutis::governance::PolicySummary,
+    assessment: PolicyAssessment,
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let command_name = cli
@@ -222,6 +231,8 @@ fn dispatch(command: Option<CliCommand>) -> Result<(), CliError> {
         Some(CliCommand::Rollback(args)) => run_rollback(args),
         Some(CliCommand::Policy(args)) => run_policy(args),
         Some(CliCommand::Audit(args)) => run_audit(args),
+        Some(CliCommand::Profile(args)) => run_profile(args),
+        Some(CliCommand::Recommend(args)) => run_recommend(args),
         Some(CliCommand::Mcp(args)) => run_mcp(args),
         Some(CliCommand::Doctor(args)) => run_doctor(args),
     }
@@ -241,6 +252,8 @@ fn command_name(command: &CliCommand) -> &'static str {
         CliCommand::Rollback(_) => "rollback",
         CliCommand::Policy(_) => "policy",
         CliCommand::Audit(_) => "audit",
+        CliCommand::Profile(_) => "profile",
+        CliCommand::Recommend(_) => "recommend",
         CliCommand::Mcp(_) => "mcp",
         CliCommand::Doctor(_) => "doctor",
     }
@@ -263,8 +276,143 @@ fn command_uses_json(command: &CliCommand) -> bool {
             PolicyCommand::Check(args) => args.json,
         },
         CliCommand::Audit(args) => args.json,
+        CliCommand::Profile(args) => match &args.command {
+            ProfileCommand::List(args) => args.json,
+            ProfileCommand::Show(args) => args.json,
+        },
+        CliCommand::Recommend(args) => args.json,
         CliCommand::Mcp(_) => false,
     }
+}
+
+fn run_profile(args: ProfileArgs) -> Result<(), CliError> {
+    match args.command {
+        ProfileCommand::List(args) => run_profile_list(args),
+        ProfileCommand::Show(args) => run_profile_show(args),
+    }
+}
+
+fn run_profile_list(args: OutputArgs) -> Result<(), CliError> {
+    let available = profiles();
+    if args.json {
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "profile",
+            data: available,
+        })?;
+    } else {
+        for profile in available {
+            println!("{}\t{}", profile.name, profile.description);
+        }
+    }
+    Ok(())
+}
+
+fn run_profile_show(args: ProfileShowArgs) -> Result<(), CliError> {
+    let profile = find_profile(&args.name)
+        .ok_or_else(|| CliError::not_found(format!("unknown profile '{}'", args.name)))?;
+    if args.json {
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "profile",
+            data: profile,
+        })?;
+    } else {
+        println!("{}: {}", profile.name, profile.description);
+        for association in profile.associations {
+            println!("\n.{}", association.extension);
+            for (index, candidate) in association.candidates.iter().enumerate() {
+                println!(
+                    "  {}. {} — {}",
+                    index + 1,
+                    candidate.bundle_id,
+                    candidate.rationale
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn run_recommend(args: RecommendArgs) -> Result<(), CliError> {
+    let profile = find_profile(&args.profile)
+        .ok_or_else(|| CliError::not_found(format!("unknown profile '{}'", args.profile)))?;
+    let catalog = scan_catalog()?;
+    report_metadata_failures(catalog.metadata_failures);
+    system::duti_version().map_err(|error| CliError::dependency(format!("{error:#}")))?;
+    let recommendation =
+        recommend_profile(&profile, &catalog.applications, system::query_default_app).map_err(
+            |error| CliError::operation(format!("failed to build recommendation: {error:#}")),
+        )?;
+    let policy = LoadedPolicy::from_environment()
+        .map_err(|error| CliError::usage(format!("failed to load policy: {error:#}")))?;
+    let result = RecommendResult {
+        metadata_failures: catalog.metadata_failures,
+        assessment: policy.policy.assess(&recommendation.plan),
+        policy: policy.summary(),
+        recommendation,
+    };
+
+    if args.json {
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "recommend",
+            data: result,
+        })?;
+    } else {
+        println!("Profile: {}", result.recommendation.profile);
+        println!("{}", result.recommendation.description);
+        for item in &result.recommendation.recommendations {
+            println!(
+                "\n{:?} .{}: {}",
+                item.action, item.extension, item.explanation
+            );
+            for candidate in &item.evidence {
+                let status = if candidate.selected {
+                    "selected"
+                } else {
+                    "candidate"
+                };
+                let paths = candidate
+                    .installed_paths
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                println!(
+                    "  {}. {} [{}; installed={}; declares_extension={}]{}",
+                    candidate.priority,
+                    candidate.bundle_id,
+                    status,
+                    candidate.installed_paths.len(),
+                    candidate.declares_extension,
+                    if paths.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {paths}")
+                    }
+                );
+            }
+        }
+        println!(
+            "\nProposed configuration:\n{}",
+            result.recommendation.proposed_toml
+        );
+        println!("Plan digest: {}", result.recommendation.plan.digest);
+        println!(
+            "Policy decision: {}",
+            if result.assessment.allowed {
+                "allowed"
+            } else {
+                "denied"
+            }
+        );
+        for violation in &result.assessment.violations {
+            println!("DENY: {violation}");
+        }
+        println!("\nThis is a proposal only; no system associations were changed.");
+    }
+    Ok(())
 }
 
 fn run_mcp(args: McpArgs) -> Result<(), CliError> {
