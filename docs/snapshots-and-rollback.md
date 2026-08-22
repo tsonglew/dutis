@@ -13,9 +13,11 @@ Snapshots are JSON files stored at:
 
 Set `DUTIS_STATE_DIR` to use another state directory, which is useful for CI,
 isolated agent runs, or backups. Files are written atomically with owner-only
-permissions on Unix. They contain extension associations, bundle identifiers,
-application paths reported by `duti`, timestamps, and plan digests. They do not
-contain tokens or credentials.
+permissions on Unix. They contain normalized association kinds, identifiers,
+roles, bundle identifiers, application paths reported by `duti`, timestamps,
+and plan digests. They do not contain tokens or credentials. Older extension-
+only snapshots remain readable; missing kind and role fields default to
+`extension` and `all`.
 
 ## Create and inspect
 
@@ -25,7 +27,7 @@ Capture every extension declared by installed applications:
 dutis snapshot create
 ```
 
-Limit capture to extensions in a declarative configuration:
+Limit capture to every typed target in a declarative configuration:
 
 ```bash
 dutis snapshot create --config dutis.toml --json
@@ -67,10 +69,10 @@ snapshot and return per-entry results.
 ## Known safe limitation
 
 `duti` can set an association but does not provide a safe command to remove one.
-If a snapshot records that an extension had no default and it now has one,
-Dutis marks that entry unresolved and refuses the whole rollback. It never
-claims to restore an absent association or performs a broad Launch Services
-reset. The snapshot remains available for inspection and future tooling.
+If a snapshot records that a target had no default and it now has one, Dutis
+marks that entry unresolved and refuses the whole rollback. It never claims to
+restore an absent association or performs a broad Launch Services reset. The
+snapshot remains available for inspection and future tooling.
 
 ## Snapshot schema
 

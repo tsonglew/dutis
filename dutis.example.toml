@@ -1,7 +1,25 @@
-# Dutis declarative configuration schema v1.
-version = 1
+# Dutis declarative configuration schema v2.
+version = 2
 
 # Values may be an exact bundle ID, exact .app path, or unique application name.
 [associations]
 md = "com.apple.TextEdit"
 txt = "com.apple.TextEdit"
+
+# Typed handlers cover UTIs, MIME types, URL schemes, and role-specific rules.
+[[handlers]]
+kind = "uti"
+identifier = "public.plain-text"
+role = "viewer"
+application = "com.apple.TextEdit"
+
+[[handlers]]
+kind = "mime"
+identifier = "text/plain"
+role = "editor"
+application = "com.apple.TextEdit"
+
+[[handlers]]
+kind = "url_scheme"
+identifier = "https"
+application = "com.apple.Safari"

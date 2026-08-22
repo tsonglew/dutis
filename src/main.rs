@@ -1,16 +1,18 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{
-    ApplyArgs, Cli, CliCommand, ConfigArgs, ExtensionArgs, LaunchAgentArgs, LaunchAgentCommand,
-    LaunchAgentInstallArgs, McpArgs, OutputArgs, PolicyArgs, PolicyCheckArgs, PolicyCommand,
-    ProfileArgs, ProfileCommand, ProfileShowArgs, RecommendArgs, RollbackArgs, SetArgs,
-    SnapshotArgs, SnapshotCommand, SnapshotCreateArgs, WatchArgs,
+    ApplyArgs, Cli, CliCommand, ConfigArgs, ExtensionArgs, HandlerArgs, HandlerCommand,
+    HandlerGetArgs, HandlerSetArgs, LaunchAgentArgs, LaunchAgentCommand, LaunchAgentInstallArgs,
+    McpArgs, OutputArgs, PolicyArgs, PolicyCheckArgs, PolicyCommand, ProfileArgs, ProfileCommand,
+    ProfileShowArgs, RecommendArgs, RollbackArgs, SetArgs, SnapshotArgs, SnapshotCommand,
+    SnapshotCreateArgs, WatchArgs,
 };
 use colored::*;
 use dutis::application::{
     find_apps_for_extension, find_fuzzy_matches, normalize_extension, resolve_app, Application,
     ApplicationCatalog,
 };
+use dutis::association::{AssociationKind, AssociationTarget, HandlerRole};
 use dutis::config::DutisConfig;
 use dutis::drift::{send_macos_notification, DriftReport, DriftState, DriftTracker};
 use dutis::governance::{
@@ -24,7 +26,7 @@ use dutis::planner::{
 };
 use dutis::profiles::{find_profile, profiles, recommend_profile, ProfileRecommendation};
 use dutis::snapshot::{
-    build_rollback_plan, capture_associations, SnapshotReason, SnapshotStore, SnapshotSummary,
+    build_rollback_plan, capture_targets, SnapshotReason, SnapshotStore, SnapshotSummary,
 };
 use dutis::system;
 use serde::Serialize;
@@ -136,6 +138,18 @@ struct QueryResult<'a> {
 struct SetResult<'a> {
     status: &'static str,
     extension: &'a str,
+    application: &'a Application,
+    command: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    audit_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    safety_snapshot_id: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+struct HandlerSetResult<'a> {
+    status: &'static str,
+    association: &'a AssociationTarget,
     application: &'a Application,
     command: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -258,6 +272,7 @@ fn dispatch(command: Option<CliCommand>) -> Result<(), CliError> {
         Some(CliCommand::Audit(args)) => run_audit(args),
         Some(CliCommand::Profile(args)) => run_profile(args),
         Some(CliCommand::Recommend(args)) => run_recommend(args),
+        Some(CliCommand::Handler(args)) => run_handler(args),
         Some(CliCommand::Watch(args)) => run_watch(args),
         Some(CliCommand::LaunchAgent(args)) => run_launch_agent(args),
         Some(CliCommand::Mcp(args)) => run_mcp(args),
@@ -281,6 +296,7 @@ fn command_name(command: &CliCommand) -> &'static str {
         CliCommand::Audit(_) => "audit",
         CliCommand::Profile(_) => "profile",
         CliCommand::Recommend(_) => "recommend",
+        CliCommand::Handler(_) => "handler",
         CliCommand::Watch(_) => "watch",
         CliCommand::LaunchAgent(_) => "launch-agent",
         CliCommand::Mcp(_) => "mcp",
@@ -310,6 +326,10 @@ fn command_uses_json(command: &CliCommand) -> bool {
             ProfileCommand::Show(args) => args.json,
         },
         CliCommand::Recommend(args) => args.json,
+        CliCommand::Handler(args) => match &args.command {
+            HandlerCommand::Get(args) => args.json,
+            HandlerCommand::Set(args) => args.json,
+        },
         CliCommand::Watch(args) => args.json,
         CliCommand::LaunchAgent(args) => match &args.command {
             LaunchAgentCommand::Install(args) => args.json,
@@ -317,6 +337,158 @@ fn command_uses_json(command: &CliCommand) -> bool {
         },
         CliCommand::Mcp(_) => false,
     }
+}
+
+fn run_handler(args: HandlerArgs) -> Result<(), CliError> {
+    match args.command {
+        HandlerCommand::Get(args) => run_handler_get(args),
+        HandlerCommand::Set(args) => run_handler_set(args),
+    }
+}
+
+fn run_handler_get(args: HandlerGetArgs) -> Result<(), CliError> {
+    let association = AssociationTarget::new(args.kind, &args.identifier, args.role)
+        .map_err(|error| CliError::usage(error.to_string()))?;
+    let current = system::get_default_handler(&association)
+        .map_err(|error| CliError::operation(format!("{error:#}")))?
+        .ok_or_else(|| {
+            CliError::not_found(format!(
+                "no default application is registered for {association}"
+            ))
+        })?;
+    if args.json {
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "handler",
+            data: current,
+        })?;
+    } else {
+        println!("Default application for {association}:");
+        println!("Bundle ID: {}", current.bundle_id);
+        if let Some(name) = current.name {
+            println!("Name: {name}");
+        }
+        if let Some(path) = current.path {
+            println!("Path: {path}");
+        }
+    }
+    Ok(())
+}
+
+fn run_handler_set(args: HandlerSetArgs) -> Result<(), CliError> {
+    if !args.dry_run && !args.yes {
+        return Err(CliError::usage(
+            "refusing to change the system without --yes; use --dry-run to preview",
+        ));
+    }
+    let association = AssociationTarget::new(args.kind, &args.identifier, args.role)
+        .map_err(|error| CliError::usage(error.to_string()))?;
+    let catalog = scan_catalog()?;
+    report_metadata_failures(catalog.metadata_failures);
+    let matches = resolve_app(&catalog.applications, &args.app_selector);
+    let app = match matches.as_slice() {
+        [] => {
+            return Err(CliError::not_found(format!(
+                "no installed application matches '{}'",
+                args.app_selector
+            )))
+        }
+        [app] => *app,
+        matches => {
+            let paths = matches
+                .iter()
+                .map(|app| app.path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(CliError::ambiguous(format!(
+                "application name '{}' is ambiguous; use a bundle ID or exact path ({paths})",
+                args.app_selector
+            )));
+        }
+    };
+    let bundle_id = app.bundle_id.as_deref().ok_or_else(|| {
+        CliError::operation(format!(
+            "{} has no readable bundle identifier",
+            app.path.display()
+        ))
+    })?;
+    let mut command = vec!["duti".to_owned()];
+    command.extend(system::duti_set_arguments(&association, bundle_id));
+    let mutation = if args.dry_run {
+        None
+    } else {
+        system::duti_version().map_err(|error| CliError::dependency(format!("{error:#}")))?;
+        let current = system::query_default_handler(&association)
+            .map_err(|error| CliError::operation(format!("{error:#}")))?;
+        let action = if current.as_ref().map(|value| value.bundle_id.as_str()) == Some(bundle_id) {
+            PlanAction::Unchanged
+        } else {
+            PlanAction::Change
+        };
+        let plan = assemble_plan(
+            dutis::config::CONFIG_VERSION,
+            vec![PlanEntry {
+                kind: association.kind,
+                role: association.role,
+                extension: association.identifier.clone(),
+                selector: args.app_selector.clone(),
+                current,
+                target: PlannedApplication::from_application(app),
+                action,
+                reason: None,
+            }],
+        )
+        .map_err(|error| CliError::operation(format!("failed to build handler plan: {error:#}")))?;
+        let request = cli_mutation_request(args.requester.as_deref(), MutationOperation::Set);
+        let result = execute_governed_cli_plan(&plan, SnapshotReason::BeforeApply, &request)?;
+        if result.report.failed > 0 {
+            let details = serde_json::to_value(&result).map_err(|error| {
+                CliError::operation(format!("failed to serialize report: {error}"))
+            })?;
+            return Err(CliError::partial_failure(
+                "the handler failed to apply or verify",
+                details,
+            ));
+        }
+        Some(result)
+    };
+    let status = match mutation.as_ref() {
+        None => "planned",
+        Some(result) if result.report.applied > 0 => "applied",
+        Some(_) => "unchanged",
+    };
+    if args.json {
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "handler",
+            data: HandlerSetResult {
+                status,
+                association: &association,
+                application: app,
+                command,
+                audit_id: mutation.as_ref().map(|result| result.audit_id.as_str()),
+                safety_snapshot_id: mutation
+                    .as_ref()
+                    .and_then(|result| result.safety_snapshot_id.as_deref()),
+            },
+        })?;
+    } else if args.dry_run {
+        println!(
+            "Dry run: would set {association} to {} ({bundle_id})",
+            app.name
+        );
+        println!("Command: {}", shell_display(&command));
+    } else if let Some(result) = mutation {
+        println!(
+            "Set {association} to {} ({bundle_id}) and verified it",
+            app.name
+        );
+        println!("Audit record: {}", result.audit_id);
+        if let Some(snapshot_id) = result.safety_snapshot_id {
+            println!("Safety snapshot: {snapshot_id}");
+        }
+    }
+    Ok(())
 }
 
 fn run_watch(args: WatchArgs) -> Result<(), CliError> {
@@ -346,7 +518,7 @@ fn run_watch(args: WatchArgs) -> Result<(), CliError> {
                 &report.plan,
                 SnapshotReason::BeforeRemediation,
                 &request,
-                system::set_default_app,
+                system::set_default_handler,
             ) {
                 Ok(result) => Some(WatchRemediation {
                     status: if result.report.failed == 0 {
@@ -438,12 +610,12 @@ fn print_watch_result(result: &WatchResult, json: bool) -> Result<(), CliError> 
             .as_ref()
             .map(|application| application.bundle_id.as_str())
             .unwrap_or("<unresolved>");
-        println!("DRIFT .{}: {} -> {}", entry.extension, current, target);
+        println!("DRIFT {}: {} -> {}", entry.association(), current, target);
     }
     for entry in &result.report.unresolved {
         println!(
-            "UNRESOLVED .{}: {}",
-            entry.extension,
+            "UNRESOLVED {}: {}",
+            entry.association(),
             entry.reason.as_deref().unwrap_or("unknown reason")
         );
     }
@@ -983,6 +1155,8 @@ fn run_set(args: SetArgs) -> Result<(), CliError> {
         let plan = assemble_plan(
             dutis::config::CONFIG_VERSION,
             vec![PlanEntry {
+                kind: AssociationKind::Extension,
+                role: HandlerRole::All,
                 extension: extension.clone(),
                 selector: args.app_selector.clone(),
                 current,
@@ -1172,12 +1346,14 @@ fn run_snapshot(args: SnapshotArgs) -> Result<(), CliError> {
 }
 
 fn run_snapshot_create(args: SnapshotCreateArgs) -> Result<(), CliError> {
-    let extensions = if let Some(path) = args.config {
+    let targets = if let Some(path) = args.config {
         DutisConfig::load(&path)
             .map_err(|error| CliError::usage(format!("{error:#}")))?
-            .associations
-            .into_keys()
-            .collect::<BTreeSet<_>>()
+            .rules()
+            .map_err(|error| CliError::usage(format!("{error:#}")))?
+            .into_iter()
+            .map(|(target, _)| target)
+            .collect::<Vec<_>>()
     } else {
         let catalog = scan_catalog()?;
         report_metadata_failures(catalog.metadata_failures);
@@ -1186,11 +1362,17 @@ fn run_snapshot_create(args: SnapshotCreateArgs) -> Result<(), CliError> {
             .into_iter()
             .flat_map(|application| application.extensions)
             .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(|extension| AssociationTarget::extension(&extension))
+            .collect::<Result<Vec<_>>>()
+            .map_err(|error| {
+                CliError::operation(format!("failed to normalize target: {error:#}"))
+            })?
     };
 
     system::duti_version().map_err(|error| CliError::dependency(format!("{error:#}")))?;
     let associations =
-        capture_associations(extensions, system::query_default_app).map_err(|error| {
+        capture_targets(targets, system::query_default_handler).map_err(|error| {
             CliError::operation(format!("failed to capture associations: {error:#}"))
         })?;
     let store = snapshot_store()?;
@@ -1265,10 +1447,12 @@ fn run_rollback(args: RollbackArgs) -> Result<(), CliError> {
     let catalog = scan_catalog()?;
     report_metadata_failures(catalog.metadata_failures);
     system::duti_version().map_err(|error| CliError::dependency(format!("{error:#}")))?;
-    let plan = build_rollback_plan(&snapshot, &catalog.applications, system::query_default_app)
-        .map_err(|error| {
-            CliError::operation(format!("failed to build rollback plan: {error:#}"))
-        })?;
+    let plan = build_rollback_plan(
+        &snapshot,
+        &catalog.applications,
+        system::query_default_handler,
+    )
+    .map_err(|error| CliError::operation(format!("failed to build rollback plan: {error:#}")))?;
 
     if args.dry_run {
         if args.json {
@@ -1337,7 +1521,7 @@ fn execute_governed_cli_plan(
     reason: SnapshotReason,
     request: &MutationRequest,
 ) -> Result<GovernedMutation, CliError> {
-    execute_governed_plan(plan, reason, request, system::set_default_app)
+    execute_governed_plan(plan, reason, request, system::set_default_handler)
         .map_err(governance_cli_error)
 }
 
@@ -1392,8 +1576,12 @@ fn build_declarative_plan(path: &Path) -> Result<AssociationPlan, CliError> {
     let catalog = scan_catalog()?;
     report_metadata_failures(catalog.metadata_failures);
     system::duti_version().map_err(|error| CliError::dependency(format!("{error:#}")))?;
-    build_plan(&config, &catalog.applications, system::query_default_app)
-        .map_err(|error| CliError::operation(format!("failed to inspect current state: {error:#}")))
+    build_plan(
+        &config,
+        &catalog.applications,
+        system::query_default_handler,
+    )
+    .map_err(|error| CliError::operation(format!("failed to inspect current state: {error:#}")))
 }
 
 fn print_plan(plan: &AssociationPlan, changes_only: bool) {
@@ -1413,7 +1601,12 @@ fn print_plan(plan: &AssociationPlan, changes_only: bool) {
                     .as_ref()
                     .map(|app| app.bundle_id.as_str())
                     .unwrap_or("<unresolved>");
-                println!("CHANGE    .{}: {} -> {}", entry.extension, current, target);
+                println!(
+                    "CHANGE    {}: {} -> {}",
+                    entry.association(),
+                    current,
+                    target
+                );
             }
             PlanAction::Unchanged => {
                 let bundle_id = entry
@@ -1421,11 +1614,11 @@ fn print_plan(plan: &AssociationPlan, changes_only: bool) {
                     .as_ref()
                     .map(|app| app.bundle_id.as_str())
                     .unwrap_or("<unknown>");
-                println!("UNCHANGED .{}: {}", entry.extension, bundle_id);
+                println!("UNCHANGED {}: {}", entry.association(), bundle_id);
             }
             PlanAction::Unresolved => println!(
-                "UNRESOLVED .{}: {}",
-                entry.extension,
+                "UNRESOLVED {}: {}",
+                entry.association(),
                 entry.reason.as_deref().unwrap_or("unknown reason")
             ),
         }
@@ -1444,9 +1637,13 @@ fn print_mutation_result(result: &GovernedMutation) {
     }
     for entry in &result.report.results {
         println!(
-            "{:?} .{}{}",
+            "{:?} {}{}",
             entry.status,
-            entry.extension,
+            AssociationTarget {
+                kind: entry.kind,
+                identifier: entry.extension.clone(),
+                role: entry.role,
+            },
             entry
                 .error
                 .as_ref()
@@ -1707,6 +1904,8 @@ fn set_default_and_report(extension: &str, app: &Application) {
             let plan = assemble_plan(
                 dutis::config::CONFIG_VERSION,
                 vec![PlanEntry {
+                    kind: AssociationKind::Extension,
+                    role: HandlerRole::All,
                     extension: extension.to_owned(),
                     selector: bundle_id.to_owned(),
                     current,
@@ -1721,7 +1920,7 @@ fn set_default_and_report(extension: &str, app: &Application) {
                 &plan,
                 SnapshotReason::BeforeApply,
                 &request,
-                system::set_default_app,
+                system::set_default_handler,
             )
             .map_err(anyhow::Error::from)
         });

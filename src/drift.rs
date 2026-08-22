@@ -175,8 +175,10 @@ mod tests {
                 approval_mode: ApprovalMode::Explicit,
                 approval_token_configured: false,
                 allowed_extensions: None,
+                allowed_kinds: None,
                 allowed_applications: None,
                 protected_associations: BTreeMap::new(),
+                protected_handlers: Vec::new(),
             },
             PolicyAssessment {
                 allowed: true,
@@ -191,6 +193,8 @@ mod tests {
         let plan = assemble_plan(
             1,
             vec![PlanEntry {
+                kind: crate::association::AssociationKind::Extension,
+                role: crate::association::HandlerRole::All,
                 extension: "md".to_owned(),
                 selector: "com.example.Editor".to_owned(),
                 current: None,

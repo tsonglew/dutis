@@ -1,5 +1,6 @@
 pub mod app_scanner;
 pub mod application;
+pub mod association;
 pub mod config;
 pub mod drift;
 pub mod governance;

@@ -1,25 +1,27 @@
 ---
 name: dutis
-description: Inspect, plan, safely change, or roll back macOS default file applications with Dutis through its CLI or MCP tools.
+description: Inspect, plan, safely change, or roll back macOS default handlers for extensions, UTIs, MIME types, and URL schemes with Dutis through its CLI or MCP tools.
 ---
 
 # Dutis
 
-Use Dutis for macOS filename-extension associations. Preserve its
+Use Dutis for macOS Launch Services associations. Preserve its
 `inspect -> plan -> policy check -> approval -> apply -> verify` boundary.
 
 ## Workflow
 
 1. Start read-only. Check readiness and the effective policy, then inspect the
-   requested extensions and installed handlers.
+   requested association targets and installed handlers. Use `handler get` or
+   `dutis_handler_get` for UTIs, MIME types, URL schemes, and role-specific
+   reads.
 2. If the user asks for a general setup or is unsure which application to use,
    inspect `dutis_profiles` / `dutis_profile`, then use `dutis_recommend` (or
    the equivalent CLI commands). Present candidate evidence and treat the
    recommendation strictly as a proposal, never as approval.
-3. Express multi-extension changes as versioned TOML. Build a fresh plan and
+3. Express multi-target changes as version 2 TOML. Build a fresh plan and
    run the policy check. Treat unresolved selectors or policy violations as a
    stop condition.
-4. Show the user the exact changed extensions, target bundle IDs, plan digest,
+4. Show the user the exact changed kinds, identifiers, roles, target bundle IDs, plan digest,
    and any policy constraints. Run dry-run before requesting approval.
 5. Ask for explicit approval immediately before a write. Never infer approval
    from an earlier inspection request.

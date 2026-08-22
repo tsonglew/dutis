@@ -1,4 +1,5 @@
 use clap::{Args, Parser, Subcommand};
+use dutis::association::{AssociationKind, HandlerRole};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
@@ -43,6 +44,8 @@ pub enum CliCommand {
     Profile(ProfileArgs),
     /// Generate an explainable proposal from a built-in profile
     Recommend(RecommendArgs),
+    /// Read or set typed Launch Services handlers
+    Handler(HandlerArgs),
     /// Detect and optionally remediate drift from a declarative configuration
     Watch(WatchArgs),
     /// Manage the optional per-user drift monitoring LaunchAgent
@@ -212,6 +215,61 @@ pub struct RecommendArgs {
     /// Emit stable machine-readable JSON
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct HandlerArgs {
+    #[command(subcommand)]
+    pub command: HandlerCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum HandlerCommand {
+    /// Read the current handler for an extension, UTI, MIME type, or URL scheme
+    Get(HandlerGetArgs),
+    /// Set a handler for an extension, UTI, MIME type, or URL scheme
+    Set(HandlerSetArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct HandlerGetArgs {
+    /// Association kind
+    #[arg(value_enum)]
+    pub kind: AssociationKind,
+    /// Extension, UTI, MIME type, or URL scheme
+    pub identifier: String,
+    /// Launch Services role; URL schemes only support all
+    #[arg(long, value_enum, default_value_t = HandlerRole::All)]
+    pub role: HandlerRole,
+    /// Emit stable machine-readable JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct HandlerSetArgs {
+    /// Association kind
+    #[arg(value_enum)]
+    pub kind: AssociationKind,
+    /// Extension, UTI, MIME type, or URL scheme
+    pub identifier: String,
+    /// Exact bundle ID, application path, or unambiguous application name
+    pub app_selector: String,
+    /// Launch Services role; URL schemes only support all
+    #[arg(long, value_enum, default_value_t = HandlerRole::All)]
+    pub role: HandlerRole,
+    /// Resolve and display the operation without changing the system
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Confirm a non-interactive system change
+    #[arg(long)]
+    pub yes: bool,
+    /// Emit stable machine-readable JSON
+    #[arg(long)]
+    pub json: bool,
+    /// Identity recorded in the local mutation audit
+    #[arg(long)]
+    pub requester: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -447,5 +505,41 @@ mod tests {
             "5",
         ])
         .is_err());
+    }
+
+    #[test]
+    fn parses_typed_handler_commands_and_roles() {
+        let cli = Cli::try_parse_from([
+            "dutis",
+            "handler",
+            "get",
+            "uti",
+            "public.html",
+            "--role",
+            "viewer",
+            "--json",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(CliCommand::Handler(HandlerArgs {
+                command: HandlerCommand::Get(HandlerGetArgs {
+                    kind: AssociationKind::Uti,
+                    role: HandlerRole::Viewer,
+                    json: true,
+                    ..
+                })
+            }))
+        ));
+        assert!(Cli::try_parse_from([
+            "dutis",
+            "handler",
+            "set",
+            "url-scheme",
+            "https",
+            "com.example.Browser",
+            "--dry-run",
+        ])
+        .is_ok());
     }
 }

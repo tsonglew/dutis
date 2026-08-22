@@ -1,6 +1,6 @@
-# Dutis - macOS Application File Extension Manager
+# Dutis - macOS Default Application Manager
 
-A comprehensive Rust application for viewing file extensions supported by macOS applications and setting default applications for file types.
+A Rust application for inspecting and safely managing macOS default handlers for filename extensions, UTIs, MIME types, and URL schemes.
 
 **Website:** [tsonglew.github.io/dutis](https://tsonglew.github.io/dutis/)
 
@@ -23,6 +23,7 @@ A comprehensive Rust application for viewing file extensions supported by macOS 
 - 🛡️ **Policy and Audit**: Enforce local allowlists and approvals with durable, verified mutation records
 - 💡 **Explainable Profiles**: Generate evidence-backed developer, designer, media, or minimal proposals without changing the system
 - 👀 **Drift Monitoring**: Detect association changes continuously, notify through macOS, and optionally remediate through snapshots and policy
+- 🔗 **Typed Associations**: Manage extensions, UTIs, MIME types, URL schemes, and Launch Services roles through one verified pipeline
 
 ## Installation
 
@@ -89,6 +90,11 @@ dutis list
 dutis query md
 dutis get .md
 
+# Inspect typed Launch Services handlers
+dutis handler get uti public.plain-text --role viewer
+dutis handler get mime text/plain --role editor
+dutis handler get url-scheme https
+
 # Emit a versioned JSON response
 dutis query json --json
 
@@ -97,6 +103,10 @@ dutis set md com.microsoft.VSCode --dry-run --json
 
 # Apply and verify a change; --yes is required for non-interactive writes
 dutis set md com.microsoft.VSCode --yes
+
+# Preview a typed handler change (URL schemes use the implicit `all` role)
+dutis handler set uti public.plain-text com.apple.TextEdit --role viewer --dry-run
+dutis handler set url-scheme https com.apple.Safari --yes
 
 # Check local readiness
 dutis doctor --json
@@ -212,7 +222,7 @@ MCP, agent policies, profiles, and drift detection is documented in the
 ### Default App Setting
 
 1. **Bundle ID Detection**: Reads the selected application's bundle identifier
-2. **duti Integration**: Sets the handler directly by filename extension
+2. **duti Integration**: Sets extension, UTI, MIME, and URL-scheme handlers with the requested Launch Services role
 3. **Verification**: Reads the resulting association back before reporting success
 
 ## Technical Details

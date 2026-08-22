@@ -1,4 +1,5 @@
 use crate::application::normalize_extension;
+use crate::association::{AssociationKind, AssociationTarget, HandlerRole};
 use crate::planner::{ApplyReport, AssociationPlan, PlanAction};
 use crate::snapshot::{apply_plan_with_snapshot, SnapshotReason, SnapshotStore};
 use anyhow::{anyhow, bail, Context, Result};
@@ -32,8 +33,11 @@ pub struct Policy {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allowed_extensions: Option<BTreeSet<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_kinds: Option<BTreeSet<AssociationKind>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub allowed_applications: Option<BTreeSet<String>>,
     pub protected_associations: BTreeMap<String, String>,
+    pub protected_handlers: Vec<ProtectedHandler>,
     #[serde(skip_serializing)]
     approval_token_sha256: Option<String>,
 }
@@ -45,10 +49,23 @@ struct RawPolicy {
     #[serde(default)]
     approval_mode: ApprovalMode,
     allowed_extensions: Option<Vec<String>>,
+    allowed_kinds: Option<Vec<AssociationKind>>,
     allowed_applications: Option<Vec<String>>,
     #[serde(default)]
     protected_associations: BTreeMap<String, String>,
+    #[serde(default)]
+    protected_handlers: Vec<ProtectedHandler>,
     approval_token_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProtectedHandler {
+    pub kind: AssociationKind,
+    pub identifier: String,
+    #[serde(default)]
+    pub role: HandlerRole,
+    pub application: String,
 }
 
 impl Default for Policy {
@@ -57,8 +74,10 @@ impl Default for Policy {
             version: POLICY_VERSION,
             approval_mode: ApprovalMode::Explicit,
             allowed_extensions: None,
+            allowed_kinds: None,
             allowed_applications: None,
             protected_associations: BTreeMap::new(),
+            protected_handlers: Vec::new(),
             approval_token_sha256: None,
         }
     }
@@ -82,6 +101,7 @@ impl Policy {
             .allowed_applications
             .map(|values| normalize_nonempty_set(values, "allowed application"))
             .transpose()?;
+        let allowed_kinds = raw.allowed_kinds.map(|values| values.into_iter().collect());
         let mut protected_associations = BTreeMap::new();
         for (input_extension, input_bundle_id) in raw.protected_associations {
             let extension = normalize_extension(&input_extension)?;
@@ -96,6 +116,36 @@ impl Policy {
                 bail!("duplicate protected extension .{extension}");
             }
         }
+        let mut seen_handlers = protected_associations
+            .keys()
+            .map(|extension| {
+                AssociationTarget::extension(extension).expect("normalized extension is valid")
+            })
+            .collect::<BTreeSet<_>>();
+        let mut protected_handlers = Vec::with_capacity(raw.protected_handlers.len());
+        for handler in raw.protected_handlers {
+            let target = AssociationTarget::new(handler.kind, &handler.identifier, handler.role)?;
+            let application = handler.application.trim();
+            if application.is_empty() {
+                bail!("protected application for {target} cannot be empty");
+            }
+            if !seen_handlers.insert(target.clone()) {
+                bail!("duplicate protected handler {target}");
+            }
+            protected_handlers.push(ProtectedHandler {
+                kind: target.kind,
+                identifier: target.identifier,
+                role: target.role,
+                application: application.to_owned(),
+            });
+        }
+        protected_handlers.sort_by(|left, right| {
+            (&left.kind, &left.identifier, &left.role).cmp(&(
+                &right.kind,
+                &right.identifier,
+                &right.role,
+            ))
+        });
         if raw.approval_mode == ApprovalMode::Token {
             let digest = raw.approval_token_sha256.as_deref().ok_or_else(|| {
                 anyhow!("approval_token_sha256 is required when approval_mode is 'token'")
@@ -112,8 +162,10 @@ impl Policy {
             version: raw.version,
             approval_mode: raw.approval_mode,
             allowed_extensions,
+            allowed_kinds,
             allowed_applications,
             protected_associations,
+            protected_handlers,
             approval_token_sha256: raw
                 .approval_token_sha256
                 .map(|digest| digest.to_ascii_lowercase()),
@@ -137,9 +189,17 @@ impl Policy {
             .filter(|entry| entry.action == PlanAction::Change)
         {
             if self
-                .allowed_extensions
+                .allowed_kinds
                 .as_ref()
-                .is_some_and(|allowed| !allowed.contains(&entry.extension))
+                .is_some_and(|allowed| !allowed.contains(&entry.kind))
+            {
+                violations.push(format!("association kind {:?} is not allowed", entry.kind));
+            }
+            if entry.kind == AssociationKind::Extension
+                && self
+                    .allowed_extensions
+                    .as_ref()
+                    .is_some_and(|allowed| !allowed.contains(&entry.extension))
             {
                 violations.push(format!("extension .{} is not allowed", entry.extension));
             }
@@ -151,15 +211,30 @@ impl Policy {
                 target_bundle_id.is_none_or(|bundle_id| !allowed.contains(bundle_id))
             }) {
                 violations.push(format!(
-                    "target application for .{} is not allowed",
-                    entry.extension
+                    "target application for {} is not allowed",
+                    entry.association()
                 ));
             }
-            if let Some(required) = self.protected_associations.get(&entry.extension) {
-                if target_bundle_id != Some(required.as_str()) {
+            if entry.kind == AssociationKind::Extension {
+                if let Some(required) = self.protected_associations.get(&entry.extension) {
+                    if target_bundle_id != Some(required.as_str()) {
+                        violations.push(format!(
+                            "protected association .{} must remain assigned to {}",
+                            entry.extension, required
+                        ));
+                    }
+                }
+            }
+            if let Some(required) = self.protected_handlers.iter().find(|handler| {
+                handler.kind == entry.kind
+                    && handler.identifier == entry.extension
+                    && handler.role == entry.role
+            }) {
+                if target_bundle_id != Some(required.application.as_str()) {
                     violations.push(format!(
-                        "protected association .{} must remain assigned to {}",
-                        entry.extension, required
+                        "protected handler {} must remain assigned to {}",
+                        entry.association(),
+                        required.application
                     ));
                 }
             }
@@ -261,8 +336,10 @@ impl LoadedPolicy {
             approval_mode: self.policy.approval_mode,
             approval_token_configured: self.policy.approval_token_sha256.is_some(),
             allowed_extensions: self.policy.allowed_extensions.clone(),
+            allowed_kinds: self.policy.allowed_kinds.clone(),
             allowed_applications: self.policy.allowed_applications.clone(),
             protected_associations: self.policy.protected_associations.clone(),
+            protected_handlers: self.policy.protected_handlers.clone(),
         }
     }
 }
@@ -276,8 +353,10 @@ pub struct PolicySummary {
     pub approval_mode: ApprovalMode,
     pub approval_token_configured: bool,
     pub allowed_extensions: Option<BTreeSet<String>>,
+    pub allowed_kinds: Option<BTreeSet<AssociationKind>>,
     pub allowed_applications: Option<BTreeSet<String>>,
     pub protected_associations: BTreeMap<String, String>,
+    pub protected_handlers: Vec<ProtectedHandler>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
@@ -478,7 +557,7 @@ pub fn execute_governed_plan<F>(
     apply: F,
 ) -> std::result::Result<GovernedMutation, GovernanceError>
 where
-    F: FnMut(&str, &str) -> Result<()>,
+    F: FnMut(&AssociationTarget, &str) -> Result<()>,
 {
     let policy = LoadedPolicy::from_environment().map_err(|error| GovernanceError {
         kind: GovernanceErrorKind::PolicyDenied,
@@ -519,7 +598,7 @@ fn execute_governed_plan_with<F>(
     apply: F,
 ) -> std::result::Result<GovernedMutation, GovernanceError>
 where
-    F: FnMut(&str, &str) -> Result<()>,
+    F: FnMut(&AssociationTarget, &str) -> Result<()>,
 {
     let assessment = loaded_policy.policy.authorize(plan, request);
     let mut record = new_audit_record(loaded_policy, plan, request);
@@ -740,9 +819,13 @@ mod tests {
         assemble_plan(
             1,
             vec![PlanEntry {
+                kind: crate::association::AssociationKind::Extension,
+                role: crate::association::HandlerRole::All,
                 extension: extension.to_owned(),
                 selector: target.to_owned(),
                 current: Some(DefaultApplication {
+                    kind: crate::association::AssociationKind::Extension,
+                    role: crate::association::HandlerRole::All,
                     extension: extension.to_owned(),
                     name: None,
                     path: None,
@@ -858,6 +941,34 @@ mod tests {
         let denied = policy.assess(&plan("md", "com.example.Other"));
         assert!(!denied.allowed);
         assert!(denied.violations[0].contains("must remain assigned"));
+    }
+
+    #[test]
+    fn typed_policy_restricts_kinds_and_protects_role_specific_handlers() {
+        let policy = Policy::parse(
+            r#"
+                version = 1
+                allowed_kinds = ["uti"]
+
+                [[protected_handlers]]
+                kind = "uti"
+                identifier = "Public.HTML"
+                role = "viewer"
+                application = "com.example.Browser"
+            "#,
+        )
+        .unwrap();
+        let mut typed = plan("public.html", "com.example.Other");
+        typed.entries[0].kind = AssociationKind::Uti;
+        typed.entries[0].role = HandlerRole::Viewer;
+        let denied = policy.assess(&typed);
+        assert!(!denied.allowed);
+        assert!(denied.violations[0].contains("must remain assigned"));
+
+        let extension = plan("md", "com.example.Browser");
+        let denied = policy.assess(&extension);
+        assert!(!denied.allowed);
+        assert!(denied.violations[0].contains("kind"));
     }
 
     #[test]
