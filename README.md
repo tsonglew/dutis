@@ -25,6 +25,7 @@ A Rust application for inspecting and safely managing macOS default handlers for
 - 👀 **Drift Monitoring**: Detect association changes continuously, notify through macOS, and optionally remediate through snapshots and policy
 - 🔗 **Typed Associations**: Manage extensions, UTIs, MIME types, URL schemes, and Launch Services roles through one verified pipeline
 - 📡 **Event Sinks**: Stream versioned drift and mutation lifecycle events to private JSONL logs or trusted local commands
+- 🌐 **HTTPS Event Adapter**: Forward events with environment-only credentials, bounded retries, and idempotency headers
 
 ## Installation
 
@@ -39,7 +40,8 @@ A Rust application for inspecting and safely managing macOS default handlers for
 brew install tsonglew/tap/dutis
 ```
 
-The tap installs a prebuilt universal binary for both Apple Silicon and Intel Macs, together with the `duti` runtime dependency.
+The tap installs universal `dutis` and `dutis-event-http` binaries for Apple
+Silicon and Intel Macs, together with the `duti` runtime dependency.
 
 ### Install duti
 
@@ -217,6 +219,17 @@ Event options are global and can appear before or after a subcommand. The same
 settings can be provided through `DUTIS_EVENT_LOG` and
 `DUTIS_EVENT_COMMAND`. See [event sinks](docs/event-sinks.md) for the schema,
 command contract, LaunchAgent behavior, and delivery guarantees.
+
+To forward events over HTTPS without placing credentials in Dutis arguments,
+configuration, or audit records, use the bundled
+[`dutis-event-http`](docs/http-event-adapter.md) command:
+
+```bash
+export DUTIS_HTTP_ENDPOINT='https://events.example.com/hooks/dutis'
+export DUTIS_HTTP_BEARER_TOKEN='replace-with-a-scoped-token'
+export DUTIS_EVENT_COMMAND="$(command -v dutis-event-http)"
+dutis-event-http --check --json
+```
 
 All write paths enforce the same local policy before mutation and record the
 requester, reviewed plan, result, and verification. See the

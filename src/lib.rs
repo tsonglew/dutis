@@ -5,6 +5,7 @@ pub mod config;
 pub mod drift;
 pub mod events;
 pub mod governance;
+pub mod http_adapter;
 pub mod launch_agent;
 pub mod mcp;
 pub mod planner;

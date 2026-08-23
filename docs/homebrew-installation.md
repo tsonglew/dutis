@@ -15,6 +15,9 @@ $(brew --prefix dutis)/share/dutis/skills/dutis
 The policy example is installed at
 `$(brew --prefix dutis)/share/dutis/dutis.policy.example.toml`.
 
+The formula also installs `dutis-event-http`, the optional HTTPS adapter for
+event-command sinks.
+
 To make it discoverable by Codex, link it into your personal skills directory:
 
 ```bash
@@ -27,7 +30,8 @@ ln -s "$(brew --prefix dutis)/share/dutis/skills/dutis" ~/.codex/skills/dutis
 When you install `dutis` via Homebrew:
 
 1. **Automatic Dependencies**: Homebrew installs the required `duti` runtime dependency
-2. **Binary Installation**: Downloads and installs a universal binary for Intel and Apple Silicon Macs
+2. **Binary Installation**: Downloads and installs universal `dutis` and
+   `dutis-event-http` binaries for Intel and Apple Silicon Macs
 3. **Path Setup**: Adds `dutis` to your system PATH
 4. **Updates**: Easy updates with `brew upgrade dutis`
 

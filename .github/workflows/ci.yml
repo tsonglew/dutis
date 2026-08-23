@@ -41,6 +41,12 @@ jobs:
       - name: Check packaging scripts
         run: |
           ruby -c scripts/render_homebrew_formula.rb
+          ruby scripts/render_homebrew_formula.rb \
+            2.15.0 \
+            aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+            https://github.com/tsonglew/dutis/releases/download/v2.15.0/dutis-v2.15.0-macos-universal.tar.gz \
+            "${RUNNER_TEMP}/dutis.rb"
+          grep -F 'bin.install "dutis", "dutis-event-http"' "${RUNNER_TEMP}/dutis.rb"
           bash -n scripts/get_app_extensions.sh
           bash -n scripts/set_default_app.sh
 
