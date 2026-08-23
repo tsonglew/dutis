@@ -277,10 +277,16 @@ mod tests {
             notify: true,
             remediation_requester: None,
             state_dir: PathBuf::from("/Users/test/Library/Application Support/dutis"),
-            environment: BTreeMap::from([(
-                "PATH".to_owned(),
-                "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin".to_owned(),
-            )]),
+            environment: BTreeMap::from([
+                (
+                    "PATH".to_owned(),
+                    "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin".to_owned(),
+                ),
+                (
+                    "DUTIS_EVENT_LOG".to_owned(),
+                    "/Users/test/Library/Application Support/dutis/events.jsonl".to_owned(),
+                ),
+            ]),
         };
         let value = plist::to_value(&plist(&spec)).unwrap();
         let dictionary = value.as_dictionary().unwrap();
@@ -292,6 +298,11 @@ mod tests {
             .iter()
             .any(|value| value.as_string() == Some("--remediate")));
         assert_eq!(dictionary["KeepAlive"].as_boolean(), Some(true));
+        assert_eq!(
+            dictionary["EnvironmentVariables"].as_dictionary().unwrap()["DUTIS_EVENT_LOG"]
+                .as_string(),
+            Some("/Users/test/Library/Application Support/dutis/events.jsonl")
+        );
         assert!(arguments.windows(2).any(|pair| {
             pair[0].as_string() == Some("--interval-seconds") && pair[1].as_string() == Some("300")
         }));

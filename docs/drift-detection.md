@@ -31,6 +31,17 @@ During one watcher session, macOS notifications are deduplicated. Dutis
 notifies when drift first appears, when its plan changes, or when associations
 return to the declared state. Every check is still written to stdout.
 
+Every check can also produce a versioned `drift.checked` event through a JSONL
+or command sink:
+
+```bash
+dutis --event-log ./events.jsonl watch dutis.toml --interval-seconds 60
+```
+
+Unlike desktop notifications, event sinks receive every check so external
+automation can use them as both state changes and monitoring heartbeats. See
+[event sinks](event-sinks.md).
+
 ## Optional LaunchAgent
 
 Install a per-user background monitor:
@@ -50,6 +61,10 @@ watcher, and writes:
 ```
 
 If `DUTIS_STATE_DIR` is set while installing, logs and state use that directory.
+If `--event-log`, `--event-command`, `DUTIS_EVENT_LOG`, or
+`DUTIS_EVENT_COMMAND` is set while installing, the normalized sink paths are
+copied into the LaunchAgent environment. Reinstall the agent after changing a
+sink.
 The LaunchAgent plist is stored at:
 
 ```text

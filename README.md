@@ -24,6 +24,7 @@ A Rust application for inspecting and safely managing macOS default handlers for
 - 💡 **Explainable Profiles**: Generate evidence-backed developer, designer, media, or minimal proposals without changing the system
 - 👀 **Drift Monitoring**: Detect association changes continuously, notify through macOS, and optionally remediate through snapshots and policy
 - 🔗 **Typed Associations**: Manage extensions, UTIs, MIME types, URL schemes, and Launch Services roles through one verified pipeline
+- 📡 **Event Sinks**: Stream versioned drift and mutation lifecycle events to private JSONL logs or trusted local commands
 
 ## Installation
 
@@ -194,6 +195,20 @@ Monitoring is read-only by default. Automatic remediation requires
 audit, safety snapshot, apply, and verification. See
 [drift detection](docs/drift-detection.md).
 
+Send drift and mutation lifecycle events to automation without parsing human
+output:
+
+```bash
+dutis --event-log ./dutis-events.jsonl watch dutis.toml --once --json
+dutis --event-command /absolute/path/to/event-handler apply dutis.toml \
+  --plan-digest <reviewed-digest> --requester codex --yes
+```
+
+Event options are global and can appear before or after a subcommand. The same
+settings can be provided through `DUTIS_EVENT_LOG` and
+`DUTIS_EVENT_COMMAND`. See [event sinks](docs/event-sinks.md) for the schema,
+command contract, LaunchAgent behavior, and delivery guarantees.
+
 All write paths enforce the same local policy before mutation and record the
 requester, reviewed plan, result, and verification. See the
 [policy and audit guide](docs/policy-and-audit.md). A reusable agent workflow is
@@ -208,7 +223,7 @@ Declarative apply also uses `7` for a stale plan and `8` for partial failure.
 Policy denial uses exit code `9`.
 
 The product and engineering sequence for declarative configuration, rollback,
-MCP, agent policies, profiles, and drift detection is documented in the
+MCP, agent policies, profiles, drift detection, and event delivery is documented in the
 [Agent Roadmap](docs/agent-roadmap.md).
 
 ## How It Works
