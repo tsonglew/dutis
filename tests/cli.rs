@@ -229,6 +229,137 @@ fn pending_events_can_be_inspected_and_replayed_from_the_cli() {
 }
 
 #[test]
+fn event_archive_and_purge_require_explicit_confirmation() {
+    use serde_json::json;
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "dutis-cli-event-retention-{}-{unique}",
+        std::process::id()
+    ));
+    let outbox_path = root.join("outbox");
+    let outbox = EventOutbox::new(&outbox_path);
+    let event = EventEnvelope::new(
+        EventType::MutationFailed,
+        EventSource::Governance,
+        &json!({"audit_id": "audit-1"}),
+    )
+    .unwrap();
+    outbox.enqueue(&event).unwrap();
+    outbox.enqueue(&event).unwrap();
+
+    let missing_threshold = dutis()
+        .args([
+            "--event-outbox",
+            outbox_path.to_str().unwrap(),
+            "events",
+            "archive",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(missing_threshold.status.code(), Some(2));
+
+    let archive_preview = dutis()
+        .args([
+            "--event-outbox",
+            outbox_path.to_str().unwrap(),
+            "events",
+            "archive",
+            "--max-attempts",
+            "2",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(archive_preview.status.success());
+    let response: Value = serde_json::from_slice(&archive_preview.stdout).unwrap();
+    assert_eq!(response["data"]["applied"], false);
+    assert_eq!(response["data"]["matched"], 1);
+    assert_eq!(outbox.pending().unwrap().len(), 1);
+
+    let archive = dutis()
+        .args([
+            "--event-outbox",
+            outbox_path.to_str().unwrap(),
+            "events",
+            "archive",
+            "--max-attempts",
+            "2",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(archive.status.success());
+    assert!(outbox.pending().unwrap().is_empty());
+
+    let dead_letters = dutis()
+        .args([
+            "--event-outbox",
+            outbox_path.to_str().unwrap(),
+            "events",
+            "dead-letters",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    let response: Value = serde_json::from_slice(&dead_letters.stdout).unwrap();
+    assert_eq!(response["data"].as_array().unwrap().len(), 1);
+
+    let dead_letter_path = fs::read_dir(outbox_path.join("dead-letter"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let mut record: Value = serde_json::from_slice(&fs::read(&dead_letter_path).unwrap()).unwrap();
+    record["dead_lettered_at"] = Value::String("2020-01-01T00:00:00Z".to_owned());
+    fs::write(
+        &dead_letter_path,
+        serde_json::to_vec_pretty(&record).unwrap(),
+    )
+    .unwrap();
+
+    let purge_preview = dutis()
+        .args([
+            "--event-outbox",
+            outbox_path.to_str().unwrap(),
+            "events",
+            "purge",
+            "--older-than-days",
+            "1",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    let response: Value = serde_json::from_slice(&purge_preview.stdout).unwrap();
+    assert_eq!(response["data"]["applied"], false);
+    assert_eq!(response["data"]["matched"], 1);
+    assert!(dead_letter_path.exists());
+
+    let purge = dutis()
+        .args([
+            "--event-outbox",
+            outbox_path.to_str().unwrap(),
+            "events",
+            "purge",
+            "--older-than-days",
+            "1",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(purge.status.success());
+    assert!(!dead_letter_path.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn profile_list_and_show_are_available_without_duti() {
     let list = dutis()
         .env("PATH", "")

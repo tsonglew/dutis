@@ -1,6 +1,6 @@
 # Durable event replay
 
-Dutis v2.17 stores failed event-command deliveries in a local outbox. Replaying
+Dutis stores failed event-command deliveries in a local outbox. Replaying
 an event retries only the external delivery; it never repeats the drift check,
 association mutation, policy decision, snapshot, or audit operation that
 originally produced the event.
@@ -73,3 +73,40 @@ time.
 If the outbox itself cannot be written, Dutis reports that failure with the
 event-command warning. The originating command keeps its original result:
 observability storage cannot authorize, undo, repeat, or relabel a mutation.
+
+## Retention and dead letters
+
+Dutis never expires pending deliveries automatically. Preview which events
+meet an attempt-count or age threshold:
+
+```bash
+dutis events archive --max-attempts 5 --json
+dutis events archive --older-than-days 30 --json
+dutis events archive --max-attempts 5 --older-than-days 30 --json
+```
+
+When both thresholds are supplied, an event matches if either threshold is
+met. Add `--yes` to move matched records into the private `dead-letter`
+subdirectory:
+
+```bash
+dutis events archive --max-attempts 5 --older-than-days 30 --yes --json
+dutis events dead-letters --json
+```
+
+Archiving preserves the complete pending record, failure timestamps, attempt
+count, original event ID, and the reasons that matched. Archived events are no
+longer included in replay batches.
+
+Permanent cleanup is a separate preview-first operation and always requires a
+positive retention age:
+
+```bash
+dutis events purge --older-than-days 90 --json
+dutis events purge --older-than-days 90 --yes --json
+```
+
+Only dead letters are eligible for purge; pending deliveries cannot be deleted
+by this command. Without `--yes`, both archive and purge report matches without
+changing any file. These maintenance commands are intentionally CLI-only and
+are not exposed as MCP tools.

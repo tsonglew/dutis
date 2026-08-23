@@ -252,12 +252,19 @@ dutis-event-http --check --json
 # Inspect and replay failed command deliveries
 dutis events pending --json
 dutis events replay --limit 100 --json
+dutis events archive --max-attempts 5 --older-than-days 30 --json
+dutis events archive --max-attempts 5 --older-than-days 30 --yes
+dutis events dead-letters --json
+dutis events purge --older-than-days 90 --json
+dutis events purge --older-than-days 90 --yes
 ```
 
 Failed event-command deliveries are stored automatically under the Dutis state
 directory. Override that location with `--event-outbox` or
 `DUTIS_EVENT_OUTBOX`. Replay keeps the original event ID so remote consumers
 can deduplicate retries. See [durable event replay](docs/event-replay.md).
+Archive and purge commands are previews unless `--yes` is present, so pending
+deliveries are never removed by an implicit retention policy.
 
 All write paths enforce the same local policy before mutation and record the
 requester, reviewed plan, result, and verification. See the

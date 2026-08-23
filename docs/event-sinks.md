@@ -126,4 +126,4 @@ dutis --event-command /absolute/path/to/handler events replay --limit 100 --json
 ```
 
 See [durable event replay](event-replay.md) for persistence, retry, and
-at-least-once delivery guarantees.
+at-least-once delivery guarantees, dead-letter retention, and explicit cleanup.

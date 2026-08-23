@@ -303,9 +303,32 @@ Acceptance criteria:
 
 ## Near-term engineering sequence
 
-1. Release Phase 14 and validate managed policy deployment across representative
-   developer and design fleets.
-2. Add explicit queue retention and operator-approved dead-letter cleanup
-   after production replay behavior is established.
-3. Extend recommendation preferences to typed UTI, MIME, and URL-scheme
+## Phase 15: Event retention and dead-letter cleanup
+
+Status: implemented for v2.19.0
+
+Add explicit lifecycle controls for delivery failures while keeping recovery
+safe, local, and operator initiated.
+
+Acceptance criteria:
+
+- Pending events can be selected by delivery-attempt count, queue age, or
+  either threshold in a combined retention rule.
+- Archive and purge are preview-only by default and require `--yes` before
+  changing local state.
+- Archiving atomically preserves the complete pending record, original event
+  ID, timestamps, attempt count, and matching reasons in private dead-letter
+  storage.
+- Purge permanently removes only dead letters older than an explicit positive
+  retention period; it never deletes pending deliveries.
+- Malformed, oversized, mismatched, or non-regular records fail closed, and no
+  maintenance command is exposed through MCP.
+
+## Near-term engineering sequence
+
+1. Release Phase 15 and validate retention thresholds against production-like
+   event volumes and operator runbooks.
+2. Extend recommendation preferences to typed UTI, MIME, and URL-scheme
    associations after gathering fleet usage evidence.
+3. Add optional metrics summaries for event delivery health without exposing
+   payload contents.
