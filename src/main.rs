@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{
-    ApplyArgs, Cli, CliCommand, ConfigArgs, EventReplayArgs, EventsArgs, EventsCommand,
-    ExtensionArgs, HandlerArgs, HandlerCommand, HandlerDefaultsArgs, HandlerGetArgs,
-    HandlerSetArgs, LaunchAgentArgs, LaunchAgentCommand, LaunchAgentInstallArgs, McpArgs,
-    OutputArgs, PolicyArgs, PolicyCheckArgs, PolicyCommand, ProfileArgs, ProfileCommand,
+    ApplyArgs, Cli, CliCommand, ConfigArgs, EventArchiveArgs, EventPurgeArgs, EventReplayArgs,
+    EventsArgs, EventsCommand, ExtensionArgs, HandlerArgs, HandlerCommand, HandlerDefaultsArgs,
+    HandlerGetArgs, HandlerSetArgs, LaunchAgentArgs, LaunchAgentCommand, LaunchAgentInstallArgs,
+    McpArgs, OutputArgs, PolicyArgs, PolicyCheckArgs, PolicyCommand, ProfileArgs, ProfileCommand,
     ProfileShowArgs, RecommendArgs, RollbackArgs, SetArgs, SnapshotArgs, SnapshotCommand,
     SnapshotCreateArgs, WatchArgs,
 };
@@ -359,6 +359,9 @@ fn command_uses_json(command: &CliCommand) -> bool {
         CliCommand::Events(args) => match &args.command {
             EventsCommand::Pending(args) => args.json,
             EventsCommand::Replay(args) => args.json,
+            EventsCommand::Archive(args) => args.json,
+            EventsCommand::DeadLetters(args) => args.json,
+            EventsCommand::Purge(args) => args.json,
         },
         CliCommand::LaunchAgent(args) => match &args.command {
             LaunchAgentCommand::Install(args) => args.json,
@@ -372,13 +375,14 @@ fn run_events(args: EventsArgs) -> Result<(), CliError> {
     match args.command {
         EventsCommand::Pending(args) => run_events_pending(args),
         EventsCommand::Replay(args) => run_events_replay(args),
+        EventsCommand::Archive(args) => run_events_archive(args),
+        EventsCommand::DeadLetters(args) => run_events_dead_letters(args),
+        EventsCommand::Purge(args) => run_events_purge(args),
     }
 }
 
 fn run_events_pending(args: OutputArgs) -> Result<(), CliError> {
-    let outbox = EventOutbox::from_environment().map_err(|error| {
-        CliError::operation(format!("failed to locate event outbox: {error:#}"))
-    })?;
+    let outbox = event_outbox()?;
     let pending = outbox
         .pending()
         .map_err(|error| CliError::operation(format!("failed to read event outbox: {error:#}")))?;
@@ -410,9 +414,7 @@ fn run_events_replay(args: EventReplayArgs) -> Result<(), CliError> {
     let command = dispatcher.command().ok_or_else(|| {
         CliError::usage("events replay requires --event-command or DUTIS_EVENT_COMMAND")
     })?;
-    let outbox = EventOutbox::from_environment().map_err(|error| {
-        CliError::operation(format!("failed to locate event outbox: {error:#}"))
-    })?;
+    let outbox = event_outbox()?;
     let limit = usize::try_from(args.limit)
         .map_err(|_| CliError::usage("event replay limit is too large for this platform"))?;
     let report = outbox.replay(command, limit).map_err(|error| {
@@ -437,6 +439,89 @@ fn run_events_replay(args: EventReplayArgs) -> Result<(), CliError> {
             "Replayed {} event(s); {} remain pending.",
             report.delivered, report.remaining
         );
+    }
+    Ok(())
+}
+
+fn run_events_archive(args: EventArchiveArgs) -> Result<(), CliError> {
+    if args.max_attempts.is_none() && args.older_than_days.is_none() {
+        return Err(CliError::usage(
+            "events archive requires --max-attempts or --older-than-days",
+        ));
+    }
+    let report = event_outbox()?
+        .archive(args.max_attempts, args.older_than_days, args.yes)
+        .map_err(|error| CliError::operation(format!("failed to archive events: {error:#}")))?;
+    print_outbox_maintenance(report, args.json)
+}
+
+fn run_events_dead_letters(args: OutputArgs) -> Result<(), CliError> {
+    let dead_letters = event_outbox()?
+        .dead_letters()
+        .map_err(|error| CliError::operation(format!("failed to read dead letters: {error:#}")))?;
+    if args.json {
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "events",
+            data: &dead_letters,
+        })?;
+    } else if dead_letters.is_empty() {
+        println!("No dead-letter events.");
+    } else {
+        for event in dead_letters {
+            println!(
+                "{}\t{}\tattempts={}\t{}\t{}",
+                event.id,
+                event.event_type.as_str(),
+                event.attempts,
+                event.dead_lettered_at,
+                event.reasons.join(",")
+            );
+        }
+    }
+    Ok(())
+}
+
+fn run_events_purge(args: EventPurgeArgs) -> Result<(), CliError> {
+    let report = event_outbox()?
+        .purge(args.older_than_days, args.yes)
+        .map_err(|error| CliError::operation(format!("failed to purge dead letters: {error:#}")))?;
+    print_outbox_maintenance(report, args.json)
+}
+
+fn event_outbox() -> Result<EventOutbox, CliError> {
+    EventOutbox::from_environment()
+        .map_err(|error| CliError::operation(format!("failed to locate event outbox: {error:#}")))
+}
+
+fn print_outbox_maintenance(
+    report: dutis::events::OutboxMaintenanceReport,
+    json: bool,
+) -> Result<(), CliError> {
+    if json {
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "events",
+            data: report,
+        })?;
+    } else {
+        println!(
+            "{} {} event(s); pending={}, dead_letters={}.",
+            if report.applied {
+                "Processed"
+            } else {
+                "Matched"
+            },
+            report.matched,
+            report.pending,
+            report.dead_letters
+        );
+        if !report.applied && report.matched > 0 {
+            println!(
+                "Preview only; rerun with --yes to apply {}.",
+                report.operation
+            );
+        }
     }
     Ok(())
 }

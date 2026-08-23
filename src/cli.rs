@@ -338,6 +338,12 @@ pub enum EventsCommand {
     Pending(OutputArgs),
     /// Deliver pending events through the configured event command
     Replay(EventReplayArgs),
+    /// Preview or archive pending events that exceed retention thresholds
+    Archive(EventArchiveArgs),
+    /// List events retained in the dead-letter archive
+    DeadLetters(OutputArgs),
+    /// Preview or permanently delete expired dead-letter events
+    Purge(EventPurgeArgs),
 }
 
 #[derive(Debug, Args)]
@@ -345,6 +351,35 @@ pub struct EventReplayArgs {
     /// Maximum number of oldest pending events to attempt
     #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u64).range(1..))]
     pub limit: u64,
+    /// Emit stable machine-readable JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct EventArchiveArgs {
+    /// Match events with at least this many delivery attempts
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    pub max_attempts: Option<u64>,
+    /// Match events queued for at least this many days
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    pub older_than_days: Option<u64>,
+    /// Apply the archive operation; omission produces a preview
+    #[arg(long)]
+    pub yes: bool,
+    /// Emit stable machine-readable JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct EventPurgeArgs {
+    /// Delete dead letters retained for at least this many days
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    pub older_than_days: u64,
+    /// Apply permanent deletion; omission produces a preview
+    #[arg(long)]
+    pub yes: bool,
     /// Emit stable machine-readable JSON
     #[arg(long)]
     pub json: bool,
@@ -496,6 +531,40 @@ mod tests {
                 command: EventsCommand::Pending(OutputArgs { json: true })
             }))
         ));
+        let cli = Cli::try_parse_from([
+            "dutis",
+            "events",
+            "archive",
+            "--max-attempts",
+            "5",
+            "--older-than-days",
+            "30",
+            "--yes",
+            "--json",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(CliCommand::Events(EventsArgs {
+                command: EventsCommand::Archive(EventArchiveArgs {
+                    max_attempts: Some(5),
+                    older_than_days: Some(30),
+                    yes: true,
+                    json: true
+                })
+            }))
+        ));
+        assert!(Cli::try_parse_from(["dutis", "events", "dead-letters", "--json"]).is_ok());
+        assert!(Cli::try_parse_from([
+            "dutis",
+            "events",
+            "purge",
+            "--older-than-days",
+            "30",
+            "--yes",
+            "--json"
+        ])
+        .is_ok());
         let cli =
             Cli::try_parse_from(["dutis", "events", "replay", "--limit", "25", "--json"]).unwrap();
         assert!(matches!(

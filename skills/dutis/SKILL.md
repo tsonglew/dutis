@@ -21,6 +21,8 @@ Use Dutis for macOS Launch Services associations. Preserve its
    before planning a change.
    If an event command reports a delivery failure, inspect `events pending`
    and use `events replay` only after confirming the configured sink is healthy.
+   Preview `events archive` and `events purge` before using `--yes`; purge is
+   permanent and applies only to events already moved into dead-letter storage.
 2. If the user asks for a general setup or is unsure which application to use,
    inspect `dutis_profiles` / `dutis_profile`, then use `dutis_recommend` (or
    the equivalent CLI commands). Present candidate evidence and treat the

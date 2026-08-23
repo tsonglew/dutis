@@ -14,8 +14,9 @@ pub const EVENT_LOG_ENV: &str = "DUTIS_EVENT_LOG";
 pub const EVENT_COMMAND_ENV: &str = "DUTIS_EVENT_COMMAND";
 pub const EVENT_OUTBOX_ENV: &str = "DUTIS_EVENT_OUTBOX";
 pub const PENDING_EVENT_SCHEMA_VERSION: u32 = 1;
+pub const DEAD_LETTER_SCHEMA_VERSION: u32 = 1;
 
-const MAX_PENDING_EVENT_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_EVENT_RECORD_BYTES: u64 = 4 * 1024 * 1024;
 
 static EVENT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -99,6 +100,43 @@ pub struct ReplayReport {
     pub failed: usize,
     pub remaining: usize,
     pub results: Vec<ReplayResult>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeadLetterEvent {
+    pub schema_version: u32,
+    pub dead_lettered_at: String,
+    pub reasons: Vec<String>,
+    pub pending: PendingEvent,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+pub struct DeadLetterSummary {
+    pub id: String,
+    pub event_type: EventType,
+    pub source: EventSource,
+    pub emitted_at: String,
+    pub queued_at: String,
+    pub dead_lettered_at: String,
+    pub attempts: u64,
+    pub reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+pub struct OutboxMaintenanceItem {
+    pub id: String,
+    pub reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+pub struct OutboxMaintenanceReport {
+    pub operation: &'static str,
+    pub applied: bool,
+    pub matched: usize,
+    pub pending: usize,
+    pub dead_letters: usize,
+    pub events: Vec<OutboxMaintenanceItem>,
 }
 
 impl EventEnvelope {
@@ -339,6 +377,119 @@ impl EventOutbox {
             .collect())
     }
 
+    pub fn dead_letters(&self) -> Result<Vec<DeadLetterSummary>> {
+        Ok(self
+            .load_all_dead_letters()?
+            .into_iter()
+            .map(|record| DeadLetterSummary {
+                id: record.pending.event.id,
+                event_type: record.pending.event.event_type,
+                source: record.pending.event.source,
+                emitted_at: record.pending.event.emitted_at,
+                queued_at: record.pending.queued_at,
+                dead_lettered_at: record.dead_lettered_at,
+                attempts: record.pending.attempts,
+                reasons: record.reasons,
+            })
+            .collect())
+    }
+
+    pub fn archive(
+        &self,
+        max_attempts: Option<u64>,
+        older_than_days: Option<u64>,
+        apply: bool,
+    ) -> Result<OutboxMaintenanceReport> {
+        if max_attempts.is_none() && older_than_days.is_none() {
+            bail!("archive requires --max-attempts or --older-than-days");
+        }
+        if max_attempts == Some(0) {
+            bail!("maximum attempts must be at least 1");
+        }
+        let queued_before = older_than_days.map(cutoff_from_days).transpose()?;
+        let pending = self.load_all()?;
+        let mut matched = Vec::new();
+        for record in pending {
+            let mut reasons = Vec::new();
+            if let Some(maximum) = max_attempts {
+                if record.attempts >= maximum {
+                    reasons.push(format!("attempts_gte_{maximum}"));
+                }
+            }
+            if let Some(cutoff) = queued_before {
+                let queued_at = parse_timestamp(&record.queued_at, "queued_at")?;
+                if queued_at <= cutoff {
+                    reasons.push(format!(
+                        "queued_at_least_{}_days",
+                        older_than_days.expect("cutoff has a retention age")
+                    ));
+                }
+            }
+            if reasons.is_empty() {
+                continue;
+            }
+            if apply {
+                let dead_letter = DeadLetterEvent {
+                    schema_version: DEAD_LETTER_SCHEMA_VERSION,
+                    dead_lettered_at: current_timestamp()?,
+                    reasons: reasons.clone(),
+                    pending: record.clone(),
+                };
+                self.store_dead_letter(&dead_letter)?;
+                fs::remove_file(self.record_path(&record.event.id)?).with_context(|| {
+                    format!("failed to remove archived event {}", record.event.id)
+                })?;
+            }
+            matched.push(OutboxMaintenanceItem {
+                id: record.event.id,
+                reasons,
+            });
+        }
+        Ok(OutboxMaintenanceReport {
+            operation: "archive",
+            applied: apply,
+            matched: matched.len(),
+            pending: self.load_all()?.len(),
+            dead_letters: self.load_all_dead_letters()?.len(),
+            events: matched,
+        })
+    }
+
+    pub fn purge(&self, older_than_days: u64, apply: bool) -> Result<OutboxMaintenanceReport> {
+        let cutoff = cutoff_from_days(older_than_days)?;
+        let dead_letters = self.load_all_dead_letters()?;
+        let mut matched = Vec::new();
+        for record in dead_letters {
+            let dead_lettered_at = parse_timestamp(&record.dead_lettered_at, "dead_lettered_at")?;
+            if dead_lettered_at > cutoff {
+                continue;
+            }
+            let reasons = vec![format!("dead_lettered_at_least_{older_than_days}_days")];
+            if apply {
+                fs::remove_file(self.dead_letter_path(&record.pending.event.id)?).with_context(
+                    || {
+                        format!(
+                            "failed to purge dead-letter event {}",
+                            record.pending.event.id
+                        )
+                    },
+                )?;
+            }
+            matched.push(OutboxMaintenanceItem {
+                id: record.pending.event.id,
+                reasons,
+            });
+        }
+        Ok(OutboxMaintenanceReport {
+            operation: "purge",
+            applied: apply,
+            matched: matched.len(),
+            pending: self.load_all()?.len(),
+            dead_letters: self.load_all_dead_letters()?.len(),
+            events: matched,
+        })
+    }
+
     pub fn replay(&self, command: &Path, limit: usize) -> Result<ReplayReport> {
         validate_command(command)?;
         if limit == 0 {
@@ -415,15 +566,42 @@ impl EventOutbox {
         Ok(pending)
     }
 
+    fn load_all_dead_letters(&self) -> Result<Vec<DeadLetterEvent>> {
+        let directory = self.dead_letter_directory();
+        if !directory.exists() {
+            return Ok(Vec::new());
+        }
+        let mut paths = json_files(&directory)?;
+        paths.sort();
+        let mut dead_letters = paths
+            .iter()
+            .map(|path| self.load_dead_letter(path))
+            .collect::<Result<Vec<_>>>()?;
+        dead_letters.sort_by(|left, right| {
+            (&left.dead_lettered_at, &left.pending.event.id)
+                .cmp(&(&right.dead_lettered_at, &right.pending.event.id))
+        });
+        Ok(dead_letters)
+    }
+
+    fn load_dead_letter(&self, path: &Path) -> Result<DeadLetterEvent> {
+        validate_regular_json_file(path)?;
+        let file = fs::File::open(path)
+            .with_context(|| format!("failed to open dead-letter event {}", path.display()))?;
+        let record: DeadLetterEvent = serde_json::from_reader(BufReader::new(file))
+            .with_context(|| format!("failed to parse dead-letter event {}", path.display()))?;
+        validate_dead_letter(&record)?;
+        if self.dead_letter_path(&record.pending.event.id)? != path {
+            bail!(
+                "dead-letter event ID does not match its filename: {}",
+                path.display()
+            );
+        }
+        Ok(record)
+    }
+
     fn load_path(&self, path: &Path) -> Result<PendingEvent> {
-        let metadata = fs::symlink_metadata(path)
-            .with_context(|| format!("failed to inspect pending event {}", path.display()))?;
-        if !metadata.file_type().is_file() {
-            bail!("pending event is not a regular file: {}", path.display());
-        }
-        if metadata.len() > MAX_PENDING_EVENT_BYTES {
-            bail!("pending event {} exceeds the size limit", path.display());
-        }
+        validate_regular_json_file(path)?;
         let file = fs::File::open(path)
             .with_context(|| format!("failed to open pending event {}", path.display()))?;
         let pending: PendingEvent = serde_json::from_reader(BufReader::new(file))
@@ -480,10 +658,116 @@ impl EventOutbox {
         Ok(())
     }
 
+    fn store_dead_letter(&self, record: &DeadLetterEvent) -> Result<()> {
+        validate_dead_letter(record)?;
+        let directory = self.dead_letter_directory();
+        create_private_directories(&directory)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
+        }
+        let destination = self.dead_letter_path(&record.pending.event.id)?;
+        let sequence = EVENT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let temporary = directory.join(format!(
+            ".{}.{}.{}.tmp",
+            record.pending.event.id,
+            std::process::id(),
+            sequence
+        ));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options
+            .open(&temporary)
+            .with_context(|| format!("failed to create {}", temporary.display()))?;
+        let mut writer = BufWriter::new(file);
+        serde_json::to_writer_pretty(&mut writer, record)?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+        writer.get_ref().sync_all()?;
+        fs::rename(&temporary, &destination).with_context(|| {
+            format!(
+                "failed to atomically store dead-letter event {}",
+                record.pending.event.id
+            )
+        })?;
+        Ok(())
+    }
+
     fn record_path(&self, id: &str) -> Result<PathBuf> {
         validate_event_id(id)?;
         Ok(self.directory.join(format!("{id}.json")))
     }
+
+    fn dead_letter_directory(&self) -> PathBuf {
+        self.directory.join("dead-letter")
+    }
+
+    fn dead_letter_path(&self, id: &str) -> Result<PathBuf> {
+        validate_event_id(id)?;
+        Ok(self.dead_letter_directory().join(format!("{id}.json")))
+    }
+}
+
+fn json_files(directory: &Path) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    for entry in fs::read_dir(directory)
+        .with_context(|| format!("failed to read {}", directory.display()))?
+    {
+        let path = entry
+            .with_context(|| format!("failed to read {}", directory.display()))?
+            .path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "json")
+        {
+            paths.push(path);
+        }
+    }
+    Ok(paths)
+}
+
+fn validate_regular_json_file(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("failed to inspect event record {}", path.display()))?;
+    if !metadata.file_type().is_file() {
+        bail!("event record is not a regular file: {}", path.display());
+    }
+    if metadata.len() > MAX_EVENT_RECORD_BYTES {
+        bail!("event record {} exceeds the size limit", path.display());
+    }
+    Ok(())
+}
+
+fn validate_dead_letter(record: &DeadLetterEvent) -> Result<()> {
+    if record.schema_version != DEAD_LETTER_SCHEMA_VERSION {
+        bail!(
+            "unsupported dead-letter schema version {}; expected {}",
+            record.schema_version,
+            DEAD_LETTER_SCHEMA_VERSION
+        );
+    }
+    if record.reasons.is_empty() || record.reasons.iter().any(|reason| reason.trim().is_empty()) {
+        bail!("dead-letter event must include at least one non-empty reason");
+    }
+    parse_timestamp(&record.dead_lettered_at, "dead_lettered_at")?;
+    validate_pending_event(&record.pending)
+}
+
+fn cutoff_from_days(days: u64) -> Result<OffsetDateTime> {
+    let days = i64::try_from(days).context("retention period is too large")?;
+    OffsetDateTime::now_utc()
+        .checked_sub(time::Duration::days(days))
+        .context("retention period is too large")
+}
+
+fn parse_timestamp(value: &str, field: &str) -> Result<OffsetDateTime> {
+    OffsetDateTime::parse(value, &Rfc3339).with_context(|| format!("invalid {field} timestamp"))
 }
 
 fn validate_pending_event(pending: &PendingEvent) -> Result<()> {
@@ -497,6 +781,8 @@ fn validate_pending_event(pending: &PendingEvent) -> Result<()> {
     if pending.attempts == 0 {
         bail!("pending event attempt count must be at least 1");
     }
+    parse_timestamp(&pending.queued_at, "queued_at")?;
+    parse_timestamp(&pending.last_attempted_at, "last_attempted_at")?;
     validate_event(&pending.event)
 }
 
@@ -508,6 +794,7 @@ fn validate_event(event: &EventEnvelope) -> Result<()> {
             EVENT_SCHEMA_VERSION
         );
     }
+    parse_timestamp(&event.emitted_at, "emitted_at")?;
     validate_event_id(&event.id)
 }
 
@@ -899,5 +1186,78 @@ mod tests {
         let error = EventOutbox::new(&directory).pending().unwrap_err();
         assert!(error.to_string().contains("not a regular file"));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn archive_and_purge_are_preview_first_and_preserve_dead_letters() {
+        let root = temp_root("outbox-retention");
+        let outbox = EventOutbox::new(root.join("outbox"));
+        let first = EventEnvelope::new(
+            EventType::DriftChecked,
+            EventSource::Watcher,
+            &json!({"sequence": 1}),
+        )
+        .unwrap();
+        let second = EventEnvelope::new(
+            EventType::MutationFailed,
+            EventSource::Governance,
+            &json!({"sequence": 2}),
+        )
+        .unwrap();
+        outbox.enqueue(&first).unwrap();
+        outbox.enqueue(&second).unwrap();
+        outbox.enqueue(&second).unwrap();
+
+        let preview = outbox.archive(Some(2), None, false).unwrap();
+        assert!(!preview.applied);
+        assert_eq!(
+            (preview.matched, preview.pending, preview.dead_letters),
+            (1, 2, 0)
+        );
+
+        let archived = outbox.archive(Some(2), None, true).unwrap();
+        assert!(archived.applied);
+        assert_eq!(
+            (archived.matched, archived.pending, archived.dead_letters),
+            (1, 1, 1)
+        );
+        let dead_letters = outbox.dead_letters().unwrap();
+        assert_eq!(dead_letters[0].id, second.id);
+        assert_eq!(dead_letters[0].attempts, 2);
+        assert!(dead_letters[0].reasons[0].contains("attempts"));
+
+        let mut old = outbox
+            .load_path(&outbox.record_path(&first.id).unwrap())
+            .unwrap();
+        old.queued_at = "2020-01-01T00:00:00Z".to_owned();
+        outbox.store(&old).unwrap();
+        let archived = outbox.archive(None, Some(1), true).unwrap();
+        assert_eq!(
+            (archived.matched, archived.pending, archived.dead_letters),
+            (1, 0, 2)
+        );
+
+        let preview = outbox.purge(0, false).unwrap();
+        assert!(!preview.applied);
+        assert_eq!(
+            (preview.matched, preview.pending, preview.dead_letters),
+            (2, 0, 2)
+        );
+        let purged = outbox.purge(0, true).unwrap();
+        assert!(purged.applied);
+        assert_eq!(
+            (purged.matched, purged.pending, purged.dead_letters),
+            (2, 0, 0)
+        );
+        assert!(outbox.dead_letters().unwrap().is_empty());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn archive_requires_a_retention_threshold() {
+        let outbox = EventOutbox::new(temp_root("outbox-missing-retention"));
+        assert!(outbox.archive(None, None, false).is_err());
+        assert!(outbox.archive(Some(0), None, false).is_err());
     }
 }
