@@ -110,6 +110,10 @@ per-entry result, and exits with code `8` when any item fails. Entries already
 in the desired state are skipped, so reapplying a converged configuration is a
 no-op.
 
+On macOS, entries with a specific `viewer`, `editor`, or `shell` role are read
+back through native Launch Services rather than the role-insensitive `duti -d`
+query. See [native Launch Services reads](native-launch-services.md).
+
 Before the first mutation, Dutis evaluates the plan against the effective local
 policy and creates a persistent pending audit record. Policy denial uses exit
 code `9` and no association is changed. See

@@ -188,6 +188,7 @@ fn typed_handler_get_uses_duti_default_handler_query() {
     let calls = root.join("duti-calls.log");
     let output = dutis()
         .env("PATH", &bin)
+        .env("DUTIS_HANDLER_READ_BACKEND", "duti")
         .env("DUTI_CALL_LOG", &calls)
         .args([
             "handler",
@@ -291,6 +292,7 @@ fn typed_config_dry_run_and_apply_cover_every_duti_argument_shape() {
     let configure = |command: &mut Command| {
         command
             .env("PATH", &bin)
+            .env("DUTIS_HANDLER_READ_BACKEND", "duti")
             .env("DUTI_CALL_LOG", &calls)
             .env("DUTI_FAKE_STATE", &fake_state)
             .env("DUTIS_STATE_DIR", &state);
@@ -633,6 +635,9 @@ fn mcp_stdio_initializes_and_advertises_read_only_tools() {
     assert!(tools
         .iter()
         .any(|tool| tool["name"] == "dutis_handler_query"));
+    assert!(tools
+        .iter()
+        .any(|tool| tool["name"] == "dutis_handler_defaults"));
     assert!(!tools.iter().any(|tool| tool["name"] == "dutis_apply"));
     assert_eq!(
         responses[3]["result"]["structuredContent"]["data"]["approval_mode"],

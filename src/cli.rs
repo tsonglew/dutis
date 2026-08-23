@@ -235,8 +235,22 @@ pub enum HandlerCommand {
     Query(HandlerGetArgs),
     /// Read the current handler for an extension, UTI, MIME type, or URL scheme
     Get(HandlerGetArgs),
+    /// Read every role-specific default directly from macOS Launch Services
+    Defaults(HandlerDefaultsArgs),
     /// Set a handler for an extension, UTI, MIME type, or URL scheme
     Set(HandlerSetArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct HandlerDefaultsArgs {
+    /// Association kind
+    #[arg(value_enum)]
+    pub kind: AssociationKind,
+    /// Extension, UTI, MIME type, or URL scheme
+    pub identifier: String,
+    /// Emit stable machine-readable JSON
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -365,6 +379,20 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(CliCommand::Query(ExtensionArgs { json: true, .. }))
+        ));
+
+        let cli =
+            Cli::try_parse_from(["dutis", "handler", "defaults", "extension", "md", "--json"])
+                .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(CliCommand::Handler(HandlerArgs {
+                command: HandlerCommand::Defaults(HandlerDefaultsArgs {
+                    kind: AssociationKind::Extension,
+                    json: true,
+                    ..
+                })
+            }))
         ));
 
         let cli = Cli::try_parse_from([

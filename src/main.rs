@@ -2,10 +2,10 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{
     ApplyArgs, Cli, CliCommand, ConfigArgs, ExtensionArgs, HandlerArgs, HandlerCommand,
-    HandlerGetArgs, HandlerSetArgs, LaunchAgentArgs, LaunchAgentCommand, LaunchAgentInstallArgs,
-    McpArgs, OutputArgs, PolicyArgs, PolicyCheckArgs, PolicyCommand, ProfileArgs, ProfileCommand,
-    ProfileShowArgs, RecommendArgs, RollbackArgs, SetArgs, SnapshotArgs, SnapshotCommand,
-    SnapshotCreateArgs, WatchArgs,
+    HandlerDefaultsArgs, HandlerGetArgs, HandlerSetArgs, LaunchAgentArgs, LaunchAgentCommand,
+    LaunchAgentInstallArgs, McpArgs, OutputArgs, PolicyArgs, PolicyCheckArgs, PolicyCommand,
+    ProfileArgs, ProfileCommand, ProfileShowArgs, RecommendArgs, RollbackArgs, SetArgs,
+    SnapshotArgs, SnapshotCommand, SnapshotCreateArgs, WatchArgs,
 };
 use colored::*;
 use dutis::application::{
@@ -24,6 +24,7 @@ use dutis::governance::{
     LoadedPolicy, MutationChannel, MutationOperation, MutationRequest, PolicyAssessment,
 };
 use dutis::launch_agent::{LaunchAgentManager, LaunchAgentSpec, LaunchAgentStatus};
+use dutis::launch_services;
 use dutis::planner::{
     assemble_plan, build_plan, AssociationPlan, PlanAction, PlanEntry, PlanSummary,
     PlannedApplication,
@@ -343,6 +344,7 @@ fn command_uses_json(command: &CliCommand) -> bool {
         CliCommand::Handler(args) => match &args.command {
             HandlerCommand::Query(args) => args.json,
             HandlerCommand::Get(args) => args.json,
+            HandlerCommand::Defaults(args) => args.json,
             HandlerCommand::Set(args) => args.json,
         },
         CliCommand::Watch(args) => args.json,
@@ -358,8 +360,37 @@ fn run_handler(args: HandlerArgs) -> Result<(), CliError> {
     match args.command {
         HandlerCommand::Query(args) => run_handler_query(args),
         HandlerCommand::Get(args) => run_handler_get(args),
+        HandlerCommand::Defaults(args) => run_handler_defaults(args),
         HandlerCommand::Set(args) => run_handler_set(args),
     }
+}
+
+fn run_handler_defaults(args: HandlerDefaultsArgs) -> Result<(), CliError> {
+    let report = launch_services::query_role_defaults(args.kind, &args.identifier)
+        .map_err(|error| CliError::operation(format!("{error:#}")))?;
+    if args.json {
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "handler",
+            data: report,
+        })?;
+    } else {
+        println!(
+            "Native Launch Services defaults for {} {}:",
+            report.kind, report.identifier
+        );
+        if let Some(content_type) = report.content_type {
+            println!("Resolved content type: {content_type}");
+        }
+        for default in report.defaults {
+            println!(
+                "{}\t{}",
+                default.role,
+                default.bundle_id.as_deref().unwrap_or("<none>")
+            );
+        }
+    }
+    Ok(())
 }
 
 fn run_handler_query(args: HandlerGetArgs) -> Result<(), CliError> {

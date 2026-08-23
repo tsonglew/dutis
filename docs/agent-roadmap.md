@@ -240,11 +240,30 @@ Acceptance criteria:
 - Release archives and the Homebrew formula install both universal binaries;
   fake-transport tests cover success, sanitization, and rejection paths.
 
+## Phase 12: Native role-aware reads
+
+Status: implemented for v2.16.0
+
+Use macOS Launch Services directly where `duti` cannot distinguish default
+handlers by role, while retaining `duti` as the mutation backend.
+
+Acceptance criteria:
+
+- Resolve extensions and MIME types to UTIs through Core Services and query
+  content defaults for `all`, `viewer`, `editor`, and `shell` roles.
+- Query URL-scheme defaults through the native Launch Services API.
+- CLI and MCP expose a read-only default-role matrix with explicit null values
+  for roles that have no registered default.
+- Role-specific get, planning, drift, snapshot, and post-write verification use
+  native reads by default so verification observes the requested role.
+- An explicit backend override supports compatibility diagnostics without
+  weakening mutation, policy, audit, or snapshot boundaries.
+
 ## Near-term engineering sequence
 
-1. Release Phase 11 and validate HTTPS delivery against representative webhook
-   receivers and long-running LaunchAgents.
-2. Explore native Launch Services read APIs for richer role-specific default
-   verification where `duti` exposes only a single default handler.
-3. Add durable replay tooling for failed external event deliveries without
+1. Release Phase 12 and validate native role results across supported macOS
+   releases and managed-device configurations.
+2. Add durable replay tooling for failed external event deliveries without
    coupling observability failures to association mutations.
+3. Add policy-aware application recommendation inputs for teams and managed
+   fleets without introducing a remote control plane.

@@ -15,6 +15,11 @@ dutis handler query mime text/plain --role editor --json
 dutis handler query url-scheme https --json
 ```
 
+Declared capability and the current default are different facts. Use
+`dutis handler defaults <kind> <identifier> --json` to inspect the native
+role-specific defaults described in
+[native Launch Services reads](native-launch-services.md).
+
 The MCP equivalent is `dutis_handler_query`, with `kind`, `identifier`, and an
 optional `role`. Identifiers use the same normalization and validation as
 planning and mutation commands.

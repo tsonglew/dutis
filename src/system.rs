@@ -1,8 +1,17 @@
 use crate::association::{AssociationKind, AssociationTarget, HandlerRole};
+use crate::launch_services;
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::process::Command;
+
+pub const HANDLER_READ_BACKEND_ENV: &str = "DUTIS_HANDLER_READ_BACKEND";
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum HandlerReadBackend {
+    Duti,
+    Native,
+}
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DefaultApplication {
@@ -46,8 +55,11 @@ pub fn get_default_app(extension: &str) -> Result<Option<DefaultApplication>> {
 }
 
 pub fn get_default_handler(association: &AssociationTarget) -> Result<Option<DefaultApplication>> {
-    duti_version()?;
-    query_default_handler(association)
+    let backend = handler_read_backend(association)?;
+    if backend == HandlerReadBackend::Duti {
+        duti_version()?;
+    }
+    query_default_handler_with_backend(association, backend)
 }
 
 pub fn query_default_app(extension: &str) -> Result<Option<DefaultApplication>> {
@@ -56,6 +68,37 @@ pub fn query_default_app(extension: &str) -> Result<Option<DefaultApplication>> 
 }
 
 pub fn query_default_handler(
+    association: &AssociationTarget,
+) -> Result<Option<DefaultApplication>> {
+    query_default_handler_with_backend(association, handler_read_backend(association)?)
+}
+
+fn query_default_handler_with_backend(
+    association: &AssociationTarget,
+    backend: HandlerReadBackend,
+) -> Result<Option<DefaultApplication>> {
+    match backend {
+        HandlerReadBackend::Duti => query_default_handler_with_duti(association),
+        HandlerReadBackend::Native => query_default_handler_with_launch_services(association),
+    }
+}
+
+fn query_default_handler_with_launch_services(
+    association: &AssociationTarget,
+) -> Result<Option<DefaultApplication>> {
+    Ok(
+        launch_services::query_default_handler(association)?.map(|default| DefaultApplication {
+            kind: association.kind,
+            role: association.role,
+            extension: association.identifier.clone(),
+            name: None,
+            path: None,
+            bundle_id: default.bundle_id,
+        }),
+    )
+}
+
+fn query_default_handler_with_duti(
     association: &AssociationTarget,
 ) -> Result<Option<DefaultApplication>> {
     let mut command = Command::new("duti");
@@ -102,6 +145,36 @@ pub fn query_default_handler(
             path: None,
             bundle_id,
         }))
+    }
+}
+
+fn handler_read_backend(association: &AssociationTarget) -> Result<HandlerReadBackend> {
+    parse_handler_read_backend(
+        std::env::var(HANDLER_READ_BACKEND_ENV).ok().as_deref(),
+        association,
+    )
+}
+
+fn parse_handler_read_backend(
+    configured: Option<&str>,
+    association: &AssociationTarget,
+) -> Result<HandlerReadBackend> {
+    match configured.map(str::trim).filter(|value| !value.is_empty()) {
+        None | Some("auto") => {
+            if cfg!(target_os = "macos")
+                && association.kind != AssociationKind::UrlScheme
+                && association.role != HandlerRole::All
+            {
+                Ok(HandlerReadBackend::Native)
+            } else {
+                Ok(HandlerReadBackend::Duti)
+            }
+        }
+        Some("duti") => Ok(HandlerReadBackend::Duti),
+        Some("native") => Ok(HandlerReadBackend::Native),
+        Some(value) => bail!(
+            "invalid {HANDLER_READ_BACKEND_ENV} value '{value}'; expected auto, native, or duti"
+        ),
     }
 }
 
@@ -211,5 +284,33 @@ mod tests {
             duti_set_arguments(&scheme, "com.example.Browser"),
             ["-s", "com.example.Browser", "https"]
         );
+    }
+
+    #[test]
+    fn selects_native_backend_for_role_specific_content_queries() {
+        let viewer =
+            AssociationTarget::new(AssociationKind::Uti, "public.text", HandlerRole::Viewer)
+                .unwrap();
+        let all =
+            AssociationTarget::new(AssociationKind::Uti, "public.text", HandlerRole::All).unwrap();
+        let expected = if cfg!(target_os = "macos") {
+            HandlerReadBackend::Native
+        } else {
+            HandlerReadBackend::Duti
+        };
+        assert_eq!(parse_handler_read_backend(None, &viewer).unwrap(), expected);
+        assert_eq!(
+            parse_handler_read_backend(None, &all).unwrap(),
+            HandlerReadBackend::Duti
+        );
+        assert_eq!(
+            parse_handler_read_backend(Some("duti"), &viewer).unwrap(),
+            HandlerReadBackend::Duti
+        );
+        assert_eq!(
+            parse_handler_read_backend(Some("native"), &all).unwrap(),
+            HandlerReadBackend::Native
+        );
+        assert!(parse_handler_read_backend(Some("unknown"), &all).is_err());
     }
 }

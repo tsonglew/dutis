@@ -15,6 +15,17 @@ pub enum AssociationKind {
     UrlScheme,
 }
 
+impl fmt::Display for AssociationKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Extension => "extension",
+            Self::Uti => "uti",
+            Self::Mime => "mime",
+            Self::UrlScheme => "url_scheme",
+        })
+    }
+}
+
 #[derive(
     Debug, Clone, Copy, Default, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize, ValueEnum,
 )]
@@ -35,6 +46,12 @@ impl HandlerRole {
             Self::Editor => "editor",
             Self::Shell => "shell",
         }
+    }
+}
+
+impl fmt::Display for HandlerRole {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_duti_argument())
     }
 }
 
