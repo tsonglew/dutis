@@ -231,6 +231,8 @@ pub struct HandlerArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum HandlerCommand {
+    /// Find installed applications that declare support for a typed handler
+    Query(HandlerGetArgs),
     /// Read the current handler for an extension, UTI, MIME type, or URL scheme
     Get(HandlerGetArgs),
     /// Set a handler for an extension, UTI, MIME type, or URL scheme
@@ -535,6 +537,27 @@ mod tests {
 
     #[test]
     fn parses_typed_handler_commands_and_roles() {
+        let cli = Cli::try_parse_from([
+            "dutis",
+            "handler",
+            "query",
+            "mime",
+            "text/plain",
+            "--role",
+            "editor",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(CliCommand::Handler(HandlerArgs {
+                command: HandlerCommand::Query(HandlerGetArgs {
+                    kind: AssociationKind::Mime,
+                    role: HandlerRole::Editor,
+                    ..
+                })
+            }))
+        ));
+
         let cli = Cli::try_parse_from([
             "dutis",
             "handler",

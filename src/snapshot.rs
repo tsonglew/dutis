@@ -469,6 +469,8 @@ mod tests {
             path: PathBuf::from("/Applications/Editor.app"),
             bundle_id: Some(bundle_id.to_owned()),
             extensions: vec!["md".to_owned()],
+            handlers: Vec::new(),
+            type_declarations: Vec::new(),
         }
     }
 

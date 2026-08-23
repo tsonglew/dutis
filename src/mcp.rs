@@ -1,4 +1,6 @@
-use crate::application::{find_apps_for_extension, normalize_extension, ApplicationCatalog};
+use crate::application::{
+    find_apps_for_extension, find_handler_candidates, normalize_extension, ApplicationCatalog,
+};
 use crate::association::{AssociationKind, AssociationTarget, HandlerRole};
 use crate::config::DutisConfig;
 use crate::drift::DriftReport;
@@ -85,6 +87,7 @@ trait McpBackend {
     fn drift(&mut self, config: &DutisConfig) -> Result<Value>;
     fn query(&mut self, extension: &str) -> Result<Value>;
     fn get(&mut self, extension: &str) -> Result<Value>;
+    fn query_handler(&mut self, association: &AssociationTarget) -> Result<Value>;
     fn get_handler(&mut self, association: &AssociationTarget) -> Result<Value>;
     fn plan(&mut self, config: &DutisConfig) -> Result<AssociationPlan>;
     fn apply(
@@ -158,6 +161,16 @@ impl McpBackend for SystemBackend {
     fn get(&mut self, extension: &str) -> Result<Value> {
         let default = system::get_default_app(extension)?;
         Ok(json!({"extension": extension, "default": default}))
+    }
+
+    fn query_handler(&mut self, association: &AssociationTarget) -> Result<Value> {
+        let catalog = ApplicationCatalog::scan()?;
+        let applications = find_handler_candidates(&catalog.applications, association);
+        Ok(json!({
+            "association": association,
+            "applications": applications,
+            "metadata_failures": catalog.metadata_failures,
+        }))
     }
 
     fn get_handler(&mut self, association: &AssociationTarget) -> Result<Value> {
@@ -382,6 +395,12 @@ impl<B: McpBackend> McpServer<B> {
                 let association = parse_association(arguments)?;
                 self.backend
                     .get_handler(&association)
+                    .map_err(operation_error)
+            }
+            "dutis_handler_query" => {
+                let association = parse_association(arguments)?;
+                self.backend
+                    .query_handler(&association)
                     .map_err(operation_error)
             }
             "dutis_diff" => {
@@ -763,6 +782,12 @@ fn tool_definitions(allow_writes: bool) -> Vec<Value> {
             read_annotations.clone(),
         ),
         tool_definition(
+            "dutis_handler_query",
+            "Find installed applications that declare support for an extension, UTI, MIME type, or URL scheme.",
+            handler_schema.clone(),
+            read_annotations.clone(),
+        ),
+        tool_definition(
             "dutis_handler_get",
             "Read the current handler for an extension, UTI, MIME type, or URL scheme.",
             handler_schema,
@@ -978,6 +1003,10 @@ mod tests {
             Ok(json!({"extension": extension, "default": null}))
         }
 
+        fn query_handler(&mut self, association: &AssociationTarget) -> Result<Value> {
+            Ok(json!({"association": association, "applications": []}))
+        }
+
         fn get_handler(&mut self, association: &AssociationTarget) -> Result<Value> {
             Ok(json!({"association": association, "default": null}))
         }
@@ -1064,6 +1093,7 @@ mod tests {
         assert!(names.contains(&"dutis_recommend"));
         assert!(names.contains(&"dutis_drift"));
         assert!(names.contains(&"dutis_handler_get"));
+        assert!(names.contains(&"dutis_handler_query"));
         assert!(names.contains(&"dutis_policy_check"));
         assert!(names.contains(&"dutis_audit"));
         assert!(!names.contains(&"dutis_apply"));
@@ -1159,6 +1189,25 @@ mod tests {
             invalid.response.unwrap()["result"]["structuredContent"]["error"]["kind"],
             "invalid_arguments"
         );
+    }
+
+    #[test]
+    fn typed_handler_query_uses_the_same_closed_target_schema() {
+        let mut server = McpServer::new(FakeBackend::new(), McpOptions::read_only());
+        let outcome = server.handle(request(
+            10,
+            "tools/call",
+            json!({
+                "name": "dutis_handler_query",
+                "arguments": {"kind": "mime", "identifier": "text/plain", "role": "editor"}
+            }),
+        ));
+        let response = outcome.response.unwrap();
+        assert_eq!(
+            response["result"]["structuredContent"]["data"]["association"]["kind"],
+            "mime"
+        );
+        assert_eq!(outcome.audit.unwrap().access, "read");
     }
 
     #[test]

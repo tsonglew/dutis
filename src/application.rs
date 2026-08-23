@@ -1,8 +1,9 @@
 use crate::app_scanner::AppScanner;
-use crate::plist_parser::PlistParser;
+use crate::association::{AssociationTarget, HandlerRole};
+use crate::plist_parser::{DeclaredHandler, PlistParser, TypeDeclaration};
 use anyhow::{bail, Result};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct Application {
@@ -10,6 +11,10 @@ pub struct Application {
     pub path: PathBuf,
     pub bundle_id: Option<String>,
     pub extensions: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub handlers: Vec<DeclaredHandler>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub type_declarations: Vec<TypeDeclaration>,
 }
 
 #[derive(Debug)]
@@ -31,16 +36,22 @@ impl ApplicationCatalog {
                 if metadata.is_err() {
                     metadata_failures += 1;
                 }
-                let metadata = metadata.ok();
+                let (bundle_id, extensions, handlers, type_declarations) = match metadata {
+                    Ok(metadata) => (
+                        metadata.bundle_id,
+                        metadata.extensions,
+                        metadata.handlers,
+                        metadata.type_declarations,
+                    ),
+                    Err(_) => (None, Vec::new(), Vec::new(), Vec::new()),
+                };
                 Application {
                     name: installed.name,
                     path: installed.path,
-                    bundle_id: metadata
-                        .as_ref()
-                        .and_then(|metadata| metadata.bundle_id.clone()),
-                    extensions: metadata
-                        .map(|metadata| metadata.extensions)
-                        .unwrap_or_default(),
+                    bundle_id,
+                    extensions,
+                    handlers,
+                    type_declarations,
                 }
             })
             .collect();
@@ -50,6 +61,47 @@ impl ApplicationCatalog {
             metadata_failures,
         })
     }
+}
+
+#[derive(Debug, Serialize)]
+pub struct HandlerCandidate<'a> {
+    pub name: &'a str,
+    pub path: &'a Path,
+    pub bundle_id: Option<&'a str>,
+    pub declarations: Vec<&'a DeclaredHandler>,
+}
+
+pub fn find_handler_candidates<'a>(
+    applications: &'a [Application],
+    association: &AssociationTarget,
+) -> Vec<HandlerCandidate<'a>> {
+    applications
+        .iter()
+        .filter_map(|application| {
+            let declarations = application
+                .handlers
+                .iter()
+                .filter(|handler| {
+                    handler.kind == association.kind
+                        && handler.identifier == association.identifier
+                        && role_supports(handler.role, association.role)
+                })
+                .collect::<Vec<_>>();
+            (!declarations.is_empty()).then_some(HandlerCandidate {
+                name: &application.name,
+                path: &application.path,
+                bundle_id: application.bundle_id.as_deref(),
+                declarations,
+            })
+        })
+        .collect()
+}
+
+fn role_supports(declared: HandlerRole, requested: HandlerRole) -> bool {
+    declared == HandlerRole::All
+        || requested == HandlerRole::All
+        || declared == requested
+        || (requested == HandlerRole::Viewer && declared == HandlerRole::Editor)
 }
 
 pub fn find_apps_for_extension<'a>(
@@ -79,6 +131,24 @@ pub fn find_fuzzy_matches<'a>(
                     .extensions
                     .iter()
                     .any(|extension| extension.to_ascii_lowercase().contains(&search_term))
+                || app.handlers.iter().any(|handler| {
+                    handler
+                        .identifier
+                        .to_ascii_lowercase()
+                        .contains(&search_term)
+                })
+                || app.type_declarations.iter().any(|declaration| {
+                    declaration
+                        .identifier
+                        .to_ascii_lowercase()
+                        .contains(&search_term)
+                        || declaration
+                            .mime_types
+                            .iter()
+                            .chain(&declaration.extensions)
+                            .chain(&declaration.conforms_to)
+                            .any(|value| value.to_ascii_lowercase().contains(&search_term))
+                })
         })
         .collect()
 }
@@ -130,6 +200,8 @@ mod tests {
             path: PathBuf::from(path),
             bundle_id: bundle_id.map(str::to_owned),
             extensions: vec!["txt".to_owned()],
+            handlers: Vec::new(),
+            type_declarations: Vec::new(),
         }
     }
 
@@ -168,5 +240,33 @@ mod tests {
         assert_eq!(normalize_extension("c++").unwrap(), "c++");
         assert!(normalize_extension("../../txt").is_err());
         assert!(normalize_extension("...").is_err());
+    }
+
+    #[test]
+    fn finds_declared_handlers_with_role_implication() {
+        let mut editor = app("Editor", "/Applications/Editor.app", Some("dev.editor"));
+        editor.handlers = vec![DeclaredHandler {
+            kind: crate::association::AssociationKind::Uti,
+            identifier: "public.text".to_owned(),
+            role: HandlerRole::Editor,
+            source: crate::plist_parser::HandlerDeclarationSource::DocumentType,
+        }];
+        let applications = vec![editor];
+        let viewer = AssociationTarget::new(
+            crate::association::AssociationKind::Uti,
+            "public.text",
+            HandlerRole::Viewer,
+        )
+        .unwrap();
+        let candidates = find_handler_candidates(&applications, &viewer);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].declarations[0].role, HandlerRole::Editor);
+        let shell = AssociationTarget::new(
+            crate::association::AssociationKind::Uti,
+            "public.text",
+            HandlerRole::Shell,
+        )
+        .unwrap();
+        assert!(find_handler_candidates(&applications, &shell).is_empty());
     }
 }

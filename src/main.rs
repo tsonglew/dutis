@@ -9,8 +9,8 @@ use cli::{
 };
 use colored::*;
 use dutis::application::{
-    find_apps_for_extension, find_fuzzy_matches, normalize_extension, resolve_app, Application,
-    ApplicationCatalog,
+    find_apps_for_extension, find_fuzzy_matches, find_handler_candidates, normalize_extension,
+    resolve_app, Application, ApplicationCatalog, HandlerCandidate,
 };
 use dutis::association::{AssociationKind, AssociationTarget, HandlerRole};
 use dutis::config::DutisConfig;
@@ -160,6 +160,13 @@ struct HandlerSetResult<'a> {
     audit_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     safety_snapshot_id: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+struct HandlerQueryResult<'a> {
+    association: &'a AssociationTarget,
+    applications: Vec<HandlerCandidate<'a>>,
+    metadata_failures: usize,
 }
 
 #[derive(Serialize)]
@@ -334,6 +341,7 @@ fn command_uses_json(command: &CliCommand) -> bool {
         },
         CliCommand::Recommend(args) => args.json,
         CliCommand::Handler(args) => match &args.command {
+            HandlerCommand::Query(args) => args.json,
             HandlerCommand::Get(args) => args.json,
             HandlerCommand::Set(args) => args.json,
         },
@@ -348,9 +356,40 @@ fn command_uses_json(command: &CliCommand) -> bool {
 
 fn run_handler(args: HandlerArgs) -> Result<(), CliError> {
     match args.command {
+        HandlerCommand::Query(args) => run_handler_query(args),
         HandlerCommand::Get(args) => run_handler_get(args),
         HandlerCommand::Set(args) => run_handler_set(args),
     }
+}
+
+fn run_handler_query(args: HandlerGetArgs) -> Result<(), CliError> {
+    let association = AssociationTarget::new(args.kind, &args.identifier, args.role)
+        .map_err(|error| CliError::usage(error.to_string()))?;
+    let catalog = scan_catalog()?;
+    report_metadata_failures(catalog.metadata_failures);
+    let applications = find_handler_candidates(&catalog.applications, &association);
+    if applications.is_empty() {
+        return Err(CliError::not_found(format!(
+            "no installed applications declare support for {association}"
+        )));
+    }
+    if args.json {
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "handler",
+            data: HandlerQueryResult {
+                association: &association,
+                applications,
+                metadata_failures: catalog.metadata_failures,
+            },
+        })?;
+    } else {
+        println!("Applications declaring support for {association}:");
+        for application in applications {
+            println!("{}\t{}", application.name, application.path.display());
+        }
+    }
+    Ok(())
 }
 
 fn run_handler_get(args: HandlerGetArgs) -> Result<(), CliError> {
@@ -2024,6 +2063,8 @@ mod tests {
             path: PathBuf::from(format!("/Applications/{name}.app")),
             bundle_id: Some(format!("example.{name}")),
             extensions: extensions.iter().map(|value| (*value).to_owned()).collect(),
+            handlers: Vec::new(),
+            type_declarations: Vec::new(),
         }
     }
 

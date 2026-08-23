@@ -13,7 +13,9 @@ Use Dutis for macOS Launch Services associations. Preserve its
 1. Start read-only. Check readiness and the effective policy, then inspect the
    requested association targets and installed handlers. Use `handler get` or
    `dutis_handler_get` for UTIs, MIME types, URL schemes, and role-specific
-   reads.
+   defaults. Use `handler query` or `dutis_handler_query` to discover apps that
+   explicitly register the requested kind and compatible role. Treat imported
+   or exported UTI definitions as type evidence, not handler capability.
 2. If the user asks for a general setup or is unsure which application to use,
    inspect `dutis_profiles` / `dutis_profile`, then use `dutis_recommend` (or
    the equivalent CLI commands). Present candidate evidence and treat the

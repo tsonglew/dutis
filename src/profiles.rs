@@ -464,6 +464,8 @@ mod tests {
             path: PathBuf::from(format!("/Applications/{name}.app")),
             bundle_id: Some(bundle_id.to_owned()),
             extensions: extensions.iter().map(|value| (*value).to_owned()).collect(),
+            handlers: Vec::new(),
+            type_declarations: Vec::new(),
         }
     }
 

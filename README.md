@@ -10,7 +10,7 @@ A Rust application for inspecting and safely managing macOS default handlers for
 ## Features
 
 - 🔍 **Scan System Applications**: Automatically discovers all installed applications on macOS
-- 📱 **File Extension Analysis**: Shows which file extensions each application supports
+- 📱 **Application Capability Discovery**: Reads declared extensions, UTIs, MIME types, URL schemes, and roles
 - 🎯 **Interactive Query Mode**: Search for applications that support specific file types
 - ⚙️ **Default App Setting**: Set default applications for file types using the `duti` command
 - 🧭 **Accurate App Selection**: Preserves full application paths, including nested and duplicate names
@@ -92,6 +92,9 @@ dutis query md
 dutis get .md
 
 # Inspect typed Launch Services handlers
+dutis handler query uti public.plain-text --role viewer
+dutis handler query mime text/plain --role editor
+dutis handler query url-scheme https
 dutis handler get uti public.plain-text --role viewer
 dutis handler get mime text/plain --role editor
 dutis handler get url-scheme https
@@ -128,6 +131,12 @@ stale digest. Every change is verified, unchanged entries are skipped, and
 partial failures include a result for every association. See the
 [declarative configuration guide](docs/declarative-configuration.md) for the
 schema and safety contract.
+
+Typed queries return compact application candidates with the exact matching
+Info.plist declarations. Full `list --json` output also includes each
+application's registered handlers and imported/exported type definitions. See
+[application metadata](docs/application-metadata.md) for evidence and role
+matching rules.
 
 Create, inspect, and restore local snapshots:
 
@@ -231,8 +240,8 @@ MCP, agent policies, profiles, drift detection, and event delivery is documented
 ### Application Scanning
 
 1. **System Directories**: Scans `/Applications`, `/System/Applications`, and `~/Applications`
-2. **Info.plist Parsing**: Reads each application's `Info.plist` file to extract supported file extensions
-3. **Modern Metadata**: Reads exported and imported UTI declarations as well as legacy document types
+2. **Info.plist Parsing**: Reads document types, URL types, roles, extensions, UTIs, and MIME types
+3. **Modern Metadata**: Keeps handler registrations separate from exported and imported UTI definitions
 
 ### Default App Setting
 
