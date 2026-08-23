@@ -365,10 +365,30 @@ Acceptance criteria:
 - Health inspection never replays, archives, purges, or otherwise changes an
   event record.
 
+## Phase 18: Configurable profile overlays
+
+Status: implemented for v2.22.0
+
+Let teams extend built-in recommendations or add reusable local profiles
+without recompiling Dutis or weakening the policy boundary.
+
+Acceptance criteria:
+
+- A strict version-one local overlay schema supports extending and replacing
+  built-in profiles plus defining named custom profiles.
+- Overlay associations use the same normalized extension, UTI, MIME,
+  URL-scheme, and role model as declarative configuration.
+- Overlay candidate order is deterministic, duplicate applications and targets
+  fail closed, and typed candidates still require matching bundle metadata.
+- CLI and MCP load the same effective profile catalog; MCP callers cannot
+  inject overlays through tool arguments.
+- Missing explicitly configured files, unsupported versions, oversized files,
+  symlinks, and malformed entries fail before recommendation.
+
 ## Near-term engineering sequence
 
-1. Release Phase 17 and validate health summaries in operator dashboards.
-2. Add configurable profile overlays only after typed preference usage shows
-   which reusable association groups are stable across fleets.
-3. Evaluate bounded concurrency controls for replay after observing real sink
+1. Release Phase 18 and validate overlay composition across team presets.
+2. Evaluate bounded concurrency controls for replay after observing real sink
    latency and failure patterns.
+3. Add signed profile distribution only if local deployment workflows prove
+   insufficient; do not introduce an implicit remote control plane.

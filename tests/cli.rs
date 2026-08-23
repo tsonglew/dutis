@@ -409,9 +409,33 @@ fn event_archive_and_purge_require_explicit_confirmation() {
 }
 
 #[test]
-fn profile_list_and_show_are_available_without_duti() {
+fn profile_overlays_are_available_without_duti() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let state = std::env::temp_dir().join(format!(
+        "dutis-profile-overlay-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&state).unwrap();
+    fs::write(
+        state.join("profiles.toml"),
+        r#"
+            version = 1
+            [[profiles]]
+            name = "team"
+            description = "Team browser defaults."
+            [[profiles.associations]]
+            kind = "url_scheme"
+            identifier = "HTTPS://"
+            applications = ["com.example.Browser"]
+        "#,
+    )
+    .unwrap();
     let list = dutis()
         .env("PATH", "")
+        .env("DUTIS_STATE_DIR", &state)
         .args(["profile", "list", "--json"])
         .output()
         .unwrap();
@@ -423,17 +447,26 @@ fn profile_list_and_show_are_available_without_duti() {
         .iter()
         .map(|profile| profile["name"].as_str().unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(names, ["developer", "designer", "media", "minimal"]);
+    assert_eq!(names, ["developer", "designer", "media", "minimal", "team"]);
 
     let show = dutis()
         .env("PATH", "")
-        .args(["profile", "show", "developer", "--json"])
+        .env("DUTIS_STATE_DIR", &state)
+        .args(["profile", "show", "team", "--json"])
         .output()
         .unwrap();
     assert!(show.status.success());
     let response: Value = serde_json::from_slice(&show.stdout).unwrap();
-    assert_eq!(response["data"]["name"], "developer");
-    assert!(response["data"]["associations"].as_array().unwrap().len() >= 5);
+    assert_eq!(response["data"]["name"], "team");
+    assert_eq!(
+        response["data"]["associations"][0]["association"]["kind"],
+        "url_scheme"
+    );
+    assert_eq!(
+        response["data"]["associations"][0]["association"]["identifier"],
+        "https"
+    );
+    fs::remove_dir_all(state).unwrap();
 }
 
 #[test]
@@ -446,6 +479,41 @@ fn unknown_profile_has_stable_json_error() {
     let response: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(response["command"], "profile");
     assert_eq!(response["error"]["kind"], "not_found");
+}
+
+#[cfg(unix)]
+#[test]
+fn invalid_profile_overlay_fails_closed_with_a_structured_error() {
+    use std::os::unix::fs::symlink;
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "dutis-profile-overlay-invalid-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let target = root.join("target.toml");
+    let overlay = root.join("profiles.toml");
+    fs::write(&target, "version = 1\n").unwrap();
+    symlink(&target, &overlay).unwrap();
+
+    let output = dutis()
+        .env("DUTIS_PROFILE_FILE", &overlay)
+        .args(["profile", "list", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["command"], "profile");
+    assert_eq!(response["error"]["kind"], "usage");
+    assert!(response["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("not a regular file"));
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(unix)]
@@ -883,6 +951,12 @@ fn mcp_stdio_initializes_and_advertises_read_only_tools() {
         "dutis-mcp-integration-{}-{unique}",
         std::process::id()
     ));
+    fs::create_dir_all(&state).unwrap();
+    fs::write(
+        state.join("profiles.toml"),
+        "version = 1\n[[profiles]]\nname = 'team'\ndescription = 'Team defaults.'\n[[profiles.associations]]\nidentifier = 'md'\napplications = ['com.example.Editor']\n",
+    )
+    .unwrap();
     let mut child = dutis()
         .arg("mcp")
         .env("DUTIS_STATE_DIR", &state)
@@ -897,7 +971,7 @@ fn mcp_stdio_initializes_and_advertises_read_only_tools() {
         "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}\n",
         "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"dutis_history\",\"arguments\":{}}}\n",
         "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"dutis_policy\",\"arguments\":{}}}\n",
-        "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"dutis_profile\",\"arguments\":{\"profile\":\"minimal\"}}}\n",
+        "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"dutis_profile\",\"arguments\":{\"profile\":\"team\"}}}\n",
         "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"dutis_event_health\",\"arguments\":{}}}\n"
     );
     child
@@ -938,7 +1012,7 @@ fn mcp_stdio_initializes_and_advertises_read_only_tools() {
     );
     assert_eq!(
         responses[4]["result"]["structuredContent"]["data"]["name"],
-        "minimal"
+        "team"
     );
     assert_eq!(
         responses[5]["result"]["structuredContent"]["data"]["status"],

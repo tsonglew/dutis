@@ -16,6 +16,54 @@ dutis profile show developer
 dutis profile show developer --json
 ```
 
+## Local profile overlays
+
+Dutis loads an optional version-one overlay from
+`$DUTIS_STATE_DIR/profiles.toml`, or from the path in `DUTIS_PROFILE_FILE`.
+Without either environment variable it checks
+`~/Library/Application Support/dutis/profiles.toml`.
+Use [`dutis.profiles.example.toml`](../dutis.profiles.example.toml) as a
+starting point:
+
+```toml
+version = 1
+
+[[profiles]]
+name = "developer"
+description = "Team development defaults."
+
+[[profiles.associations]]
+kind = "extension"
+identifier = "md"
+applications = ["com.example.TeamEditor", "dev.zed.Zed"]
+
+[[profiles.associations]]
+kind = "uti"
+identifier = "public.source-code"
+role = "editor"
+applications = ["com.example.TeamEditor"]
+
+[[profiles]]
+name = "support-team"
+description = "Support documents and web links."
+
+[[profiles.associations]]
+kind = "url_scheme"
+identifier = "https"
+applications = ["com.apple.Safari"]
+```
+
+An overlay with a built-in name extends that profile. Its applications are
+placed before built-in candidates, with duplicate bundle IDs removed. Set
+`replace_candidates = true` on an association to replace that target's
+candidates, or `replace = true` on a profile to replace all its associations.
+A new profile requires a description and at least one association.
+
+Names, identifiers, roles, candidate lists, duplicate targets, file type, and
+the 1 MiB file-size limit are validated before any profile is returned. An
+explicitly configured missing file is an error. MCP clients use the server's
+local overlay and cannot submit an overlay in a tool call.
+
 ## Generate a proposal
 
 ```bash
@@ -25,8 +73,9 @@ dutis recommend developer --json
 
 Recommendation scans installed applications and reads current handlers. It
 does not change Launch Services. It loads the effective local policy before
-ranking candidates. Built-in profiles contribute extension targets; local
-policy can additionally contribute typed UTI, MIME, and URL-scheme targets.
+ranking candidates. Built-in and overlaid profiles contribute association
+targets; local policy can additionally contribute typed UTI, MIME, and
+URL-scheme targets.
 For each target, Dutis:
 
 1. Honors a protected association as the required target.

@@ -66,7 +66,9 @@ Profile recommendations are also read-only. A recommendation is evidence, not
 approval: it does not register a mutation tool call or change an association.
 Candidate ordering uses the server's effective local policy, including
 recommendation preferences, allowlists, and protected associations. Callers
-cannot supply or replace fleet policy through the tool request.
+cannot supply or replace fleet policy through the tool request. Profile list,
+inspection, and recommendation tools also load the server's local
+`profiles.toml` overlay; callers cannot inject overlay content or paths.
 To use one, review its `proposed_toml`, rebuild it with `dutis_diff`, run
 `dutis_policy_check`, and follow the normal write approval flow.
 

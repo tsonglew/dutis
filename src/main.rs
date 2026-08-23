@@ -31,7 +31,8 @@ use dutis::planner::{
     PlannedApplication,
 };
 use dutis::profiles::{
-    find_profile, profiles, recommend_profile_with_policy_typed, ProfileRecommendation,
+    effective_profiles, find_effective_profile, recommend_effective_profile_with_policy,
+    ProfileRecommendation,
 };
 use dutis::snapshot::{
     build_rollback_plan, capture_targets, SnapshotReason, SnapshotStore, SnapshotSummary,
@@ -1069,7 +1070,8 @@ fn run_profile(args: ProfileArgs) -> Result<(), CliError> {
 }
 
 fn run_profile_list(args: OutputArgs) -> Result<(), CliError> {
-    let available = profiles();
+    let available = effective_profiles()
+        .map_err(|error| CliError::usage(format!("failed to load profiles: {error:#}")))?;
     if args.json {
         write_json(&JsonEnvelope {
             api_version: API_VERSION,
@@ -1085,7 +1087,8 @@ fn run_profile_list(args: OutputArgs) -> Result<(), CliError> {
 }
 
 fn run_profile_show(args: ProfileShowArgs) -> Result<(), CliError> {
-    let profile = find_profile(&args.name)
+    let profile = find_effective_profile(&args.name)
+        .map_err(|error| CliError::usage(format!("failed to load profiles: {error:#}")))?
         .ok_or_else(|| CliError::not_found(format!("unknown profile '{}'", args.name)))?;
     if args.json {
         write_json(&JsonEnvelope {
@@ -1111,14 +1114,15 @@ fn run_profile_show(args: ProfileShowArgs) -> Result<(), CliError> {
 }
 
 fn run_recommend(args: RecommendArgs) -> Result<(), CliError> {
-    let profile = find_profile(&args.profile)
+    let profile = find_effective_profile(&args.profile)
+        .map_err(|error| CliError::usage(format!("failed to load profiles: {error:#}")))?
         .ok_or_else(|| CliError::not_found(format!("unknown profile '{}'", args.profile)))?;
     let catalog = scan_catalog()?;
     report_metadata_failures(catalog.metadata_failures);
     system::duti_version().map_err(|error| CliError::dependency(format!("{error:#}")))?;
     let policy = LoadedPolicy::from_environment()
         .map_err(|error| CliError::usage(format!("failed to load policy: {error:#}")))?;
-    let recommendation = recommend_profile_with_policy_typed(
+    let recommendation = recommend_effective_profile_with_policy(
         &profile,
         &catalog.applications,
         system::query_default_handler,

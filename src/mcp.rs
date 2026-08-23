@@ -11,7 +11,9 @@ use crate::governance::{
 };
 use crate::launch_services;
 use crate::planner::{build_plan, AssociationPlan};
-use crate::profiles::{find_profile, profiles, recommend_profile_with_policy_typed};
+use crate::profiles::{
+    effective_profiles, find_effective_profile, recommend_effective_profile_with_policy,
+};
 use crate::snapshot::{build_rollback_plan, SnapshotReason, SnapshotStore};
 use crate::system;
 use anyhow::{anyhow, Context, Result};
@@ -83,6 +85,7 @@ pub struct McpAuditEvent {
 trait McpBackend {
     fn list(&mut self) -> Result<Value>;
     fn profiles(&mut self) -> Result<Value>;
+    fn profile_exists(&mut self, name: &str) -> Result<bool>;
     fn profile(&mut self, name: &str) -> Result<Value>;
     fn recommend(&mut self, name: &str) -> Result<Value>;
     fn event_health(&mut self) -> Result<Value>;
@@ -118,20 +121,26 @@ impl McpBackend for SystemBackend {
     }
 
     fn profiles(&mut self) -> Result<Value> {
-        serde_json::to_value(profiles()).context("failed to serialize built-in profiles")
+        serde_json::to_value(effective_profiles()?).context("failed to serialize profiles")
+    }
+
+    fn profile_exists(&mut self, name: &str) -> Result<bool> {
+        Ok(find_effective_profile(name)?.is_some())
     }
 
     fn profile(&mut self, name: &str) -> Result<Value> {
-        let profile = find_profile(name).ok_or_else(|| anyhow!("unknown profile '{name}'"))?;
+        let profile =
+            find_effective_profile(name)?.ok_or_else(|| anyhow!("unknown profile '{name}'"))?;
         serde_json::to_value(profile).context("failed to serialize profile")
     }
 
     fn recommend(&mut self, name: &str) -> Result<Value> {
-        let profile = find_profile(name).ok_or_else(|| anyhow!("unknown profile '{name}'"))?;
+        let profile =
+            find_effective_profile(name)?.ok_or_else(|| anyhow!("unknown profile '{name}'"))?;
         let catalog = ApplicationCatalog::scan()?;
         system::duti_version()?;
         let policy = LoadedPolicy::from_environment()?;
-        let recommendation = recommend_profile_with_policy_typed(
+        let recommendation = recommend_effective_profile_with_policy(
             &profile,
             &catalog.applications,
             system::query_default_handler,
@@ -375,7 +384,11 @@ impl<B: McpBackend> McpServer<B> {
             "dutis_profiles" => self.backend.profiles().map_err(operation_error),
             "dutis_profile" => {
                 let profile = argument_string(arguments, "profile")?;
-                if find_profile(profile).is_none() {
+                if !self
+                    .backend
+                    .profile_exists(profile)
+                    .map_err(operation_error)?
+                {
                     return Err(ToolError::new(
                         "not_found",
                         format!("unknown profile '{profile}'"),
@@ -385,7 +398,11 @@ impl<B: McpBackend> McpServer<B> {
             }
             "dutis_recommend" => {
                 let profile = argument_string(arguments, "profile")?;
-                if find_profile(profile).is_none() {
+                if !self
+                    .backend
+                    .profile_exists(profile)
+                    .map_err(operation_error)?
+                {
                     return Err(ToolError::new(
                         "not_found",
                         format!("unknown profile '{profile}'"),
@@ -1009,6 +1026,7 @@ where
 mod tests {
     use super::*;
     use crate::planner::PlanSummary;
+    use crate::profiles::{find_profile, profiles};
 
     struct FakeBackend {
         plan: AssociationPlan,
@@ -1044,11 +1062,19 @@ mod tests {
             serde_json::to_value(profiles()).map_err(Into::into)
         }
 
+        fn profile_exists(&mut self, name: &str) -> Result<bool> {
+            Ok(find_profile(name).is_some())
+        }
+
         fn profile(&mut self, name: &str) -> Result<Value> {
-            serde_json::to_value(find_profile(name)).map_err(Into::into)
+            serde_json::to_value(
+                find_profile(name).ok_or_else(|| anyhow!("unknown profile '{name}'"))?,
+            )
+            .map_err(Into::into)
         }
 
         fn recommend(&mut self, name: &str) -> Result<Value> {
+            find_profile(name).ok_or_else(|| anyhow!("unknown profile '{name}'"))?;
             Ok(json!({"profile": name, "proposal_only": true}))
         }
 
