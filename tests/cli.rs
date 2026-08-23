@@ -1,3 +1,4 @@
+use dutis::events::{EventEnvelope, EventOutbox, EventSource, EventType};
 use serde_json::Value;
 use std::fs;
 use std::io::Write;
@@ -117,6 +118,114 @@ fn history_is_empty_for_an_isolated_state_directory() {
     let response: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(response["command"], "history");
     assert_eq!(response["data"].as_array().unwrap().len(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn pending_events_can_be_inspected_and_replayed_from_the_cli() {
+    use serde_json::json;
+    use std::os::unix::fs::PermissionsExt;
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "dutis-cli-event-replay-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let outbox_path = root.join("outbox");
+    let outbox = EventOutbox::new(&outbox_path);
+    let event = EventEnvelope::new(
+        EventType::DriftChecked,
+        EventSource::Watcher,
+        &json!({"state": "drift_detected"}),
+    )
+    .unwrap();
+    outbox.enqueue(&event).unwrap();
+
+    let pending = dutis()
+        .args([
+            "--event-outbox",
+            outbox_path.to_str().unwrap(),
+            "events",
+            "pending",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(pending.status.success());
+    let response: Value = serde_json::from_slice(&pending.stdout).unwrap();
+    assert_eq!(response["data"][0]["id"], event.id);
+    assert_eq!(response["data"][0]["attempts"], 1);
+
+    let missing_command = dutis()
+        .args([
+            "--event-outbox",
+            outbox_path.to_str().unwrap(),
+            "events",
+            "replay",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(missing_command.status.code(), Some(2));
+
+    let received = root.join("received.jsonl");
+    let command = root.join("sink.sh");
+    fs::write(&command, "#!/bin/sh\necho unavailable >&2\nexit 7\n").unwrap();
+    fs::set_permissions(&command, fs::Permissions::from_mode(0o700)).unwrap();
+    let failed_replay = dutis()
+        .args([
+            "--event-command",
+            command.to_str().unwrap(),
+            "--event-outbox",
+            outbox_path.to_str().unwrap(),
+            "events",
+            "replay",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(failed_replay.status.code(), Some(8));
+    let response: Value = serde_json::from_slice(&failed_replay.stdout).unwrap();
+    assert_eq!(response["error"]["details"]["failed"], 1);
+    assert_eq!(response["error"]["details"]["remaining"], 1);
+    assert_eq!(outbox.pending().unwrap()[0].attempts, 2);
+
+    fs::write(
+        &command,
+        "#!/bin/sh\n/bin/cat >> \"$DUTIS_TEST_EVENT_OUTPUT\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&command, fs::Permissions::from_mode(0o700)).unwrap();
+    let replay = dutis()
+        .env("DUTIS_TEST_EVENT_OUTPUT", &received)
+        .args([
+            "--event-command",
+            command.to_str().unwrap(),
+            "--event-outbox",
+            outbox_path.to_str().unwrap(),
+            "events",
+            "replay",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        replay.status.success(),
+        "{}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
+    let response: Value = serde_json::from_slice(&replay.stdout).unwrap();
+    assert_eq!(response["data"]["delivered"], 1);
+    assert_eq!(response["data"]["remaining"], 0);
+    let delivered: Value =
+        serde_json::from_str(fs::read_to_string(received).unwrap().trim()).unwrap();
+    assert_eq!(delivered["id"], event.id);
+    assert!(outbox.pending().unwrap().is_empty());
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

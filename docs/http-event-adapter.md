@@ -88,5 +88,6 @@ names, not credentials.
 
 The adapter is synchronous and has no durable queue. A failure becomes the
 same best-effort warning as any other event-command failure; Dutis continues
-its primary operation. Use the JSONL sink alongside the adapter when local
-replay or durable delivery is required.
+its primary operation. Failed command deliveries are placed in the durable
+outbox and can be retried with `dutis events replay`. See
+[durable event replay](event-replay.md).

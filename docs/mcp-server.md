@@ -138,5 +138,7 @@ continues to use `DUTIS_STATE_DIR` when set.
 Start the server with global `--event-log` or `--event-command` options, or set
 their `DUTIS_EVENT_LOG` / `DUTIS_EVENT_COMMAND` environment variables, to emit
 `dutis_drift` checks and governed mutation lifecycle events. Event-command
-stdout is discarded and cannot corrupt the JSON-RPC stream. See
+stdout is discarded and cannot corrupt the JSON-RPC stream. Failed command
+deliveries enter the same durable outbox used by the CLI and can be recovered
+later with `dutis events pending` and `dutis events replay`. See
 [event sinks](event-sinks.md).

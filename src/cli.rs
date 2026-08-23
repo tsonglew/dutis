@@ -16,6 +16,9 @@ pub struct Cli {
     /// Pipe each event as JSON to this executable command
     #[arg(long, global = true, value_name = "PATH")]
     pub event_command: Option<PathBuf>,
+    /// Store failed command deliveries for later replay
+    #[arg(long, global = true, value_name = "DIRECTORY")]
+    pub event_outbox: Option<PathBuf>,
     #[command(subcommand)]
     pub command: Option<CliCommand>,
 }
@@ -54,6 +57,8 @@ pub enum CliCommand {
     Handler(HandlerArgs),
     /// Detect and optionally remediate drift from a declarative configuration
     Watch(WatchArgs),
+    /// Inspect or replay failed event-command deliveries
+    Events(EventsArgs),
     /// Manage the optional per-user drift monitoring LaunchAgent
     LaunchAgent(LaunchAgentArgs),
     /// Run the local Model Context Protocol server over stdio
@@ -322,6 +327,30 @@ pub struct WatchArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct EventsArgs {
+    #[command(subcommand)]
+    pub command: EventsCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EventsCommand {
+    /// List events waiting in the durable outbox
+    Pending(OutputArgs),
+    /// Deliver pending events through the configured event command
+    Replay(EventReplayArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct EventReplayArgs {
+    /// Maximum number of oldest pending events to attempt
+    #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u64).range(1..))]
+    pub limit: u64,
+    /// Emit stable machine-readable JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
 pub struct LaunchAgentArgs {
     #[command(subcommand)]
     pub command: LaunchAgentCommand,
@@ -446,6 +475,8 @@ mod tests {
             "--once",
             "--event-command",
             "/usr/local/bin/event-sink",
+            "--event-outbox",
+            "outbox",
         ])
         .unwrap();
         assert_eq!(cli.event_log, Some(PathBuf::from("events.jsonl")));
@@ -453,6 +484,29 @@ mod tests {
             cli.event_command,
             Some(PathBuf::from("/usr/local/bin/event-sink"))
         );
+        assert_eq!(cli.event_outbox, Some(PathBuf::from("outbox")));
+    }
+
+    #[test]
+    fn parses_event_outbox_commands() {
+        let cli = Cli::try_parse_from(["dutis", "events", "pending", "--json"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(CliCommand::Events(EventsArgs {
+                command: EventsCommand::Pending(OutputArgs { json: true })
+            }))
+        ));
+        let cli =
+            Cli::try_parse_from(["dutis", "events", "replay", "--limit", "25", "--json"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(CliCommand::Events(EventsArgs {
+                command: EventsCommand::Replay(EventReplayArgs {
+                    limit: 25,
+                    json: true
+                })
+            }))
+        ));
     }
 
     #[test]

@@ -20,6 +20,7 @@ LaunchAgents:
 ```bash
 export DUTIS_EVENT_LOG="$HOME/Library/Application Support/dutis/events.jsonl"
 export DUTIS_EVENT_COMMAND="/absolute/path/to/handler"
+export DUTIS_EVENT_OUTBOX="$HOME/Library/Application Support/dutis/event-outbox"
 ```
 
 Relative paths are resolved against the current working directory at startup.
@@ -110,3 +111,19 @@ failure prints a warning to stderr and does not:
 - stop a continuous watcher from performing later checks.
 
 When both sinks are configured, Dutis attempts both even if one fails.
+
+Failed command deliveries are stored atomically in the private event outbox.
+The default location is `event-outbox` inside `DUTIS_STATE_DIR`, or
+`~/Library/Application Support/dutis/event-outbox`. Use `--event-outbox` or
+`DUTIS_EVENT_OUTBOX` to select another directory. JSONL write failures are not
+queued because the outbox is specifically a command-delivery queue.
+
+Inspect and replay the oldest pending events with:
+
+```bash
+dutis events pending --json
+dutis --event-command /absolute/path/to/handler events replay --limit 100 --json
+```
+
+See [durable event replay](event-replay.md) for persistence, retry, and
+at-least-once delivery guarantees.
