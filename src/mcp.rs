@@ -11,7 +11,7 @@ use crate::governance::{
 };
 use crate::launch_services;
 use crate::planner::{build_plan, AssociationPlan};
-use crate::profiles::{find_profile, profiles, recommend_profile};
+use crate::profiles::{find_profile, profiles, recommend_profile_with_policy};
 use crate::snapshot::{build_rollback_plan, SnapshotReason, SnapshotStore};
 use crate::system;
 use anyhow::{anyhow, Context, Result};
@@ -129,9 +129,13 @@ impl McpBackend for SystemBackend {
         let profile = find_profile(name).ok_or_else(|| anyhow!("unknown profile '{name}'"))?;
         let catalog = ApplicationCatalog::scan()?;
         system::duti_version()?;
-        let recommendation =
-            recommend_profile(&profile, &catalog.applications, system::query_default_app)?;
         let policy = LoadedPolicy::from_environment()?;
+        let recommendation = recommend_profile_with_policy(
+            &profile,
+            &catalog.applications,
+            system::query_default_app,
+            &policy.policy,
+        )?;
         Ok(json!({
             "metadata_failures": catalog.metadata_failures,
             "assessment": policy.policy.assess(&recommendation.plan),
@@ -801,7 +805,7 @@ fn tool_definitions(allow_writes: bool) -> Vec<Value> {
         ),
         tool_definition(
             "dutis_recommend",
-            "Generate an explainable profile proposal, deterministic plan, and policy assessment without changing the system.",
+            "Generate an explainable policy-aware profile proposal and deterministic plan without changing the system.",
             profile_schema,
             read_annotations.clone(),
         ),

@@ -24,20 +24,42 @@ dutis recommend developer --json
 ```
 
 Recommendation scans installed applications and reads current handlers. It
-does not change Launch Services. For each extension, Dutis:
+does not change Launch Services. It loads the effective local policy before
+ranking candidates. For each extension, Dutis:
 
-1. Keeps the current handler when it is a profile candidate with exactly one
-   installed application, minimizing unnecessary changes.
-2. Otherwise selects the first candidate with exactly one installed path.
-3. Marks the extension unavailable when every candidate is missing or a bundle
-   ID resolves to multiple paths. Unavailable entries are excluded from the
-   proposed configuration and plan.
+1. Honors a protected association as the required target.
+2. Applies ordered extension-specific preferences, then global preferences
+   that match candidates in the selected profile.
+3. Removes candidates excluded by kind, extension, or application allowlists.
+4. Keeps the current eligible profile candidate when no installed policy
+   preference takes precedence, minimizing unnecessary changes.
+5. Otherwise selects the first eligible candidate with one installed path.
+6. Marks an extension `policy_blocked` when installed candidates exist but are
+   excluded, or `unavailable` when no uniquely installed eligible candidate
+   exists. Neither result enters the proposed configuration or plan.
 
-Each result includes the candidate order, installed paths, whether the app
-declares support for the extension, the selected target, current handler, and
-a human-readable reason. The complete response also includes proposed TOML, a
-deterministic `AssociationPlan` and digest, and assessment against the current
-local policy.
+Each result includes candidate source (`profile`, `global_preference`,
+`extension_preference`, or `protected_policy`), policy eligibility and reasons,
+installed paths, declared extension support, selected target, current handler,
+and a human-readable explanation. The complete response also includes proposed
+TOML, a deterministic `AssociationPlan` and digest, and assessment against the
+same local policy.
+
+Configure recommendation inputs in the local policy file:
+
+```toml
+[recommendations]
+preferred_applications = ["com.microsoft.VSCode", "com.apple.TextEdit"]
+
+[recommendations.extensions]
+md = ["com.microsoft.VSCode"]
+txt = ["com.apple.TextEdit", "com.microsoft.VSCode"]
+```
+
+`DUTIS_POLICY_FILE` selects the policy file. Otherwise Dutis uses
+`$DUTIS_STATE_DIR/policy.toml` or the normal per-user state directory. Teams can
+deploy that file with their existing device-management tooling; Dutis does not
+fetch policy or accept recommendation overrides from a remote service.
 
 Declared extension support is evidence rather than the only selector. Some
 applications accept formats that are not present in all versions of their
@@ -64,7 +86,8 @@ the resulting handlers.
 
 Read-only MCP servers advertise `dutis_profiles`, `dutis_profile`, and
 `dutis_recommend`. `dutis_recommend` accepts `{ "profile": "developer" }` and
-returns the same evidence, proposed configuration, plan, and policy assessment
-as the CLI. Agents must still use `dutis_diff` and `dutis_policy_check`, obtain
-explicit approval, and provide the freshly reviewed digest before calling a
-write tool.
+returns the same policy-aware evidence, proposed configuration, plan, and
+policy assessment as the CLI. It uses the server's effective local policy and
+does not accept caller-supplied policy. Agents must still use `dutis_diff` and
+`dutis_policy_check`, obtain explicit approval, and provide the freshly
+reviewed digest before calling a write tool.

@@ -32,6 +32,12 @@ allowed_extensions = ["md", "txt"]
 allowed_kinds = ["extension", "uti", "mime", "url_scheme"]
 allowed_applications = ["com.microsoft.VSCode", "com.apple.TextEdit"]
 
+[recommendations]
+preferred_applications = ["com.microsoft.VSCode"]
+
+[recommendations.extensions]
+md = ["com.microsoft.VSCode", "com.apple.TextEdit"]
+
 [protected_associations]
 pdf = "com.apple.Preview"
 
@@ -49,6 +55,12 @@ application = "com.apple.TextEdit"
   allow all four kinds; use an empty list to deny all kinds.
 - `allowed_applications` limits target bundle identifiers with the same
   omitted-versus-empty behavior.
+- `recommendations.preferred_applications` is an ordered fleet-wide preference
+  list. It reorders matching candidates already present in a built-in profile.
+- `recommendations.extensions` supplies ordered preferences for individual
+  extensions and may introduce a team-standard application that is not in the
+  built-in profile. Preferences remain constrained by all allowlists and
+  protected associations.
 - `protected_associations` permits an extension only when the target is the
   configured bundle identifier. This allows restoration to the protected value
   while denying changes away from it.

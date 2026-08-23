@@ -799,7 +799,9 @@ fn policy_show_redacts_token_hash_and_audit_starts_empty() {
     let secret_hash = "a".repeat(64);
     fs::write(
         &policy_path,
-        format!("version = 1\napproval_mode = 'token'\napproval_token_sha256 = '{secret_hash}'\n"),
+        format!(
+            "version = 1\napproval_mode = 'token'\napproval_token_sha256 = '{secret_hash}'\n[recommendations]\npreferred_applications = ['com.example.TeamEditor']\n[recommendations.extensions]\nmd = ['com.example.Markdown']\n"
+        ),
     )
     .unwrap();
 
@@ -812,6 +814,14 @@ fn policy_show_redacts_token_hash_and_audit_starts_empty() {
     let policy: Value = serde_json::from_slice(&policy_output.stdout).unwrap();
     assert_eq!(policy["data"]["approval_mode"], "token");
     assert_eq!(policy["data"]["approval_token_configured"], true);
+    assert_eq!(
+        policy["data"]["recommendations"]["preferred_applications"][0],
+        "com.example.TeamEditor"
+    );
+    assert_eq!(
+        policy["data"]["recommendations"]["extensions"]["md"][0],
+        "com.example.Markdown"
+    );
     assert!(!String::from_utf8(policy_output.stdout)
         .unwrap()
         .contains(&secret_hash));

@@ -6,6 +6,16 @@ allowed_extensions = ["md", "txt", "json"]
 allowed_kinds = ["extension", "uti", "mime", "url_scheme"]
 allowed_applications = ["com.microsoft.VSCode", "com.apple.TextEdit"]
 
+# Optional ordered inputs for profile recommendations. Global preferences only
+# reorder applications already in a profile. Extension preferences may add a
+# team-standard application to that extension's candidate list.
+[recommendations]
+preferred_applications = ["com.microsoft.VSCode", "com.apple.TextEdit"]
+
+[recommendations.extensions]
+md = ["com.microsoft.VSCode"]
+txt = ["com.apple.TextEdit", "com.microsoft.VSCode"]
+
 # A protected extension may only remain on, or be restored to, this bundle ID.
 [protected_associations]
 pdf = "com.apple.Preview"

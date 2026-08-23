@@ -22,6 +22,7 @@ A Rust application for inspecting and safely managing macOS default handlers for
 - 🔌 **Local MCP Server**: Give agents read-only discovery and planning tools with separately gated writes
 - 🛡️ **Policy and Audit**: Enforce local allowlists and approvals with durable, verified mutation records
 - 💡 **Explainable Profiles**: Generate evidence-backed developer, designer, media, or minimal proposals without changing the system
+- 🏢 **Fleet-Aware Recommendations**: Apply local allowlists, protected targets, and ordered team preferences before proposing applications
 - 👀 **Drift Monitoring**: Detect association changes continuously, notify through macOS, and optionally remediate through snapshots and policy
 - 🔗 **Typed Associations**: Manage extensions, UTIs, MIME types, URL schemes, and Launch Services roles through one verified pipeline
 - 📡 **Event Sinks**: Stream versioned drift and mutation lifecycle events to private JSONL logs or trusted local commands
@@ -188,9 +189,20 @@ dutis profile show developer --json
 dutis recommend developer --json
 ```
 
-Recommendations show ordered candidates, installed paths, declared extension
-support, the current handler, the proposed TOML, a deterministic plan digest,
-and the effective policy assessment. They never change system associations.
+Recommendations use the effective local policy before selecting a target.
+Teams can deploy preferences without a remote control plane:
+
+```toml
+[recommendations]
+preferred_applications = ["com.microsoft.VSCode"]
+
+[recommendations.extensions]
+md = ["com.microsoft.VSCode", "com.apple.TextEdit"]
+```
+
+Results show each candidate's source, policy eligibility, installed paths,
+declared extension support, the proposed TOML, a deterministic plan digest, and
+the effective policy assessment. They never change system associations.
 Review [profiles and recommendations](docs/profiles-and-recommendations.md) for
 selection rules and the safe path from a proposal to an approved apply.
 

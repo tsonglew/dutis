@@ -160,7 +160,9 @@ fn escape_applescript(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::governance::{ApprovalMode, PolicyAssessment, PolicySummary};
+    use crate::governance::{
+        ApprovalMode, PolicyAssessment, PolicySummary, RecommendationPreferences,
+    };
     use crate::planner::{assemble_plan, PlanEntry};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -179,6 +181,7 @@ mod tests {
                 allowed_applications: None,
                 protected_associations: BTreeMap::new(),
                 protected_handlers: Vec::new(),
+                recommendations: RecommendationPreferences::default(),
             },
             PolicyAssessment {
                 allowed: true,

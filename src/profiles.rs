@@ -1,6 +1,7 @@
 use crate::application::Application;
 use crate::association::{AssociationKind, HandlerRole};
 use crate::config::{DutisConfig, CONFIG_VERSION};
+use crate::governance::Policy;
 use crate::planner::{assemble_plan, AssociationPlan, PlanAction, PlanEntry, PlannedApplication};
 use crate::system::DefaultApplication;
 use anyhow::Result;
@@ -32,15 +33,39 @@ pub struct ProfileCandidate {
 pub enum RecommendationAction {
     Change,
     KeepCurrent,
+    PolicyBlocked,
     Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidateSource {
+    ProtectedPolicy,
+    ExtensionPreference,
+    GlobalPreference,
+    Profile,
+}
+
+impl CandidateSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ProtectedPolicy => "protected_policy",
+            Self::ExtensionPreference => "extension_preference",
+            Self::GlobalPreference => "global_preference",
+            Self::Profile => "profile",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct CandidateEvidence {
     pub bundle_id: String,
     pub priority: usize,
+    pub source: CandidateSource,
     pub installed_paths: Vec<PathBuf>,
     pub declares_extension: bool,
+    pub policy_eligible: bool,
+    pub policy_reasons: Vec<String>,
     pub selected: bool,
     pub rationale: String,
 }
@@ -61,6 +86,7 @@ pub struct RecommendationSummary {
     pub available: usize,
     pub changes: usize,
     pub kept_current: usize,
+    pub policy_blocked: usize,
     pub unavailable: usize,
 }
 
@@ -98,26 +124,61 @@ pub fn recommend_profile<F>(
 where
     F: FnMut(&str) -> Result<Option<DefaultApplication>>,
 {
+    recommend_profile_internal(profile, applications, &mut query_default, None)
+}
+
+pub fn recommend_profile_with_policy<F>(
+    profile: &ProfileDefinition,
+    applications: &[Application],
+    mut query_default: F,
+    policy: &Policy,
+) -> Result<ProfileRecommendation>
+where
+    F: FnMut(&str) -> Result<Option<DefaultApplication>>,
+{
+    recommend_profile_internal(profile, applications, &mut query_default, Some(policy))
+}
+
+fn recommend_profile_internal<F>(
+    profile: &ProfileDefinition,
+    applications: &[Application],
+    query_default: &mut F,
+    policy: Option<&Policy>,
+) -> Result<ProfileRecommendation>
+where
+    F: FnMut(&str) -> Result<Option<DefaultApplication>>,
+{
     let mut proposed_associations = BTreeMap::new();
     let mut plan_entries = Vec::new();
     let mut recommendations = Vec::with_capacity(profile.associations.len());
 
     for association in &profile.associations {
         let current = query_default(association.extension)?;
-        let candidates = association
-            .candidates
-            .iter()
+        let required =
+            policy.and_then(|policy| required_application(policy, association.extension));
+        let candidates = ordered_candidates(association, policy, required);
+        let candidates = candidates
+            .into_iter()
             .enumerate()
             .map(|(index, candidate)| {
                 let matches = applications
                     .iter()
                     .filter(|application| {
-                        application.bundle_id.as_deref() == Some(candidate.bundle_id)
+                        application.bundle_id.as_deref() == Some(candidate.bundle_id.as_str())
                     })
                     .collect::<Vec<_>>();
+                let policy_reasons = policy.map_or_else(Vec::new, |policy| {
+                    policy_reasons(
+                        policy,
+                        association.extension,
+                        &candidate.bundle_id,
+                        required,
+                    )
+                });
                 CandidateEvidence {
-                    bundle_id: candidate.bundle_id.to_owned(),
+                    bundle_id: candidate.bundle_id,
                     priority: index + 1,
+                    source: candidate.source,
                     installed_paths: matches
                         .iter()
                         .map(|application| application.path.clone())
@@ -128,66 +189,95 @@ where
                             .iter()
                             .any(|extension| extension.eq_ignore_ascii_case(association.extension))
                     }),
+                    policy_eligible: policy_reasons.is_empty(),
+                    policy_reasons,
                     selected: false,
-                    rationale: candidate.rationale.to_owned(),
+                    rationale: candidate.rationale,
                 }
             })
             .collect::<Vec<_>>();
 
         let current_candidate = current.as_ref().and_then(|current| {
-            association
-                .candidates
+            candidates
                 .iter()
                 .position(|candidate| candidate.bundle_id == current.bundle_id)
         });
-        let selected_index = current_candidate
-            .filter(|index| candidates[*index].installed_paths.len() == 1)
+        let selected_index = candidates
+            .iter()
+            .position(|candidate| {
+                candidate.source != CandidateSource::Profile
+                    && candidate.policy_eligible
+                    && candidate.installed_paths.len() == 1
+            })
             .or_else(|| {
-                candidates
-                    .iter()
-                    .position(|candidate| candidate.installed_paths.len() == 1)
+                current_candidate.filter(|index| {
+                    candidates[*index].policy_eligible
+                        && candidates[*index].installed_paths.len() == 1
+                })
+            })
+            .or_else(|| {
+                candidates.iter().position(|candidate| {
+                    candidate.policy_eligible && candidate.installed_paths.len() == 1
+                })
             });
         let mut evidence = candidates;
 
         let (action, target, explanation) = if let Some(index) = selected_index {
             evidence[index].selected = true;
-            let selected = &association.candidates[index];
+            let selected = &evidence[index];
             let application = applications
                 .iter()
                 .find(|application| {
-                    application.bundle_id.as_deref() == Some(selected.bundle_id)
+                    application.bundle_id.as_deref() == Some(selected.bundle_id.as_str())
                         && application.path == evidence[index].installed_paths[0]
                 })
-                .expect("selected profile candidate has one installed application");
+                .expect("selected recommendation candidate has one installed application");
             let target = PlannedApplication::from_application(application)
-                .expect("profile candidates have bundle identifiers");
-            let keep_current =
-                current.as_ref().map(|value| value.bundle_id.as_str()) == Some(selected.bundle_id);
+                .expect("recommendation candidates have bundle identifiers");
+            let keep_current = current.as_ref().map(|value| value.bundle_id.as_str())
+                == Some(selected.bundle_id.as_str());
             let action = if keep_current {
                 RecommendationAction::KeepCurrent
             } else {
                 RecommendationAction::Change
             };
             let explanation = if keep_current {
-                format!(
-                    "Keep {} because the current handler is compatible with the {} profile.",
-                    application.name, profile.name
-                )
+                if policy.is_some() {
+                    format!(
+                        "Keep {} because the current handler is compatible with the {} profile and local policy.",
+                        application.name, profile.name
+                    )
+                } else {
+                    format!(
+                        "Keep {} because the current handler is compatible with the {} profile.",
+                        application.name, profile.name
+                    )
+                }
             } else {
-                format!(
-                    "Recommend {} because it is the highest-priority uniquely installed candidate for .{}: {}",
-                    application.name, association.extension, selected.rationale
-                )
+                match selected.source {
+                    CandidateSource::ProtectedPolicy => format!(
+                        "Recommend {} because local policy requires .{} to use {}.",
+                        application.name, association.extension, selected.bundle_id
+                    ),
+                    CandidateSource::ExtensionPreference | CandidateSource::GlobalPreference => {
+                        format!(
+                            "Recommend {} because it is the highest-priority uniquely installed local-policy preference for .{}.",
+                            application.name, association.extension
+                        )
+                    }
+                    CandidateSource::Profile => format!(
+                        "Recommend {} because it is the highest-priority uniquely installed candidate for .{}: {}",
+                        application.name, association.extension, selected.rationale
+                    ),
+                }
             };
-            proposed_associations.insert(
-                association.extension.to_owned(),
-                selected.bundle_id.to_owned(),
-            );
+            proposed_associations
+                .insert(association.extension.to_owned(), selected.bundle_id.clone());
             plan_entries.push(PlanEntry {
                 kind: AssociationKind::Extension,
                 role: HandlerRole::All,
                 extension: association.extension.to_owned(),
-                selector: selected.bundle_id.to_owned(),
+                selector: selected.bundle_id.clone(),
                 current: current.clone(),
                 target: Some(target.clone()),
                 action: if keep_current {
@@ -199,14 +289,26 @@ where
             });
             (action, Some(target), explanation)
         } else {
-            (
-                RecommendationAction::Unavailable,
-                None,
+            let blocked = evidence.iter().any(|candidate| {
+                candidate.installed_paths.len() == 1 && !candidate.policy_eligible
+            });
+            let action = if blocked {
+                RecommendationAction::PolicyBlocked
+            } else {
+                RecommendationAction::Unavailable
+            };
+            let explanation = if blocked {
                 format!(
-                    "No uniquely installed candidate is available for .{}; no change is proposed.",
+                    "Installed candidates for .{} are excluded by local policy; no change is proposed.",
                     association.extension
-                ),
-            )
+                )
+            } else {
+                format!(
+                    "No uniquely installed policy-eligible candidate is available for .{}; no change is proposed.",
+                    association.extension
+                )
+            };
+            (action, None, explanation)
         };
 
         recommendations.push(AssociationRecommendation {
@@ -240,6 +342,10 @@ where
             .iter()
             .filter(|recommendation| recommendation.action == RecommendationAction::KeepCurrent)
             .count(),
+        policy_blocked: recommendations
+            .iter()
+            .filter(|recommendation| recommendation.action == RecommendationAction::PolicyBlocked)
+            .count(),
         unavailable: recommendations
             .iter()
             .filter(|recommendation| recommendation.action == RecommendationAction::Unavailable)
@@ -255,6 +361,126 @@ where
         proposed_toml,
         plan,
     })
+}
+
+#[derive(Debug)]
+struct OrderedCandidate {
+    bundle_id: String,
+    source: CandidateSource,
+    rationale: String,
+}
+
+fn ordered_candidates(
+    association: &ProfileAssociation,
+    policy: Option<&Policy>,
+    required: Option<&str>,
+) -> Vec<OrderedCandidate> {
+    let mut candidates = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut push = |bundle_id: &str, source: CandidateSource, rationale: String| {
+        if seen.insert(bundle_id.to_owned()) {
+            candidates.push(OrderedCandidate {
+                bundle_id: bundle_id.to_owned(),
+                source,
+                rationale,
+            });
+        }
+    };
+    if let Some(bundle_id) = required {
+        push(
+            bundle_id,
+            CandidateSource::ProtectedPolicy,
+            "Required by the local protected-association policy.".to_owned(),
+        );
+    }
+    if let Some(policy) = policy {
+        if let Some(preferences) = policy.recommendations.extensions.get(association.extension) {
+            for bundle_id in preferences {
+                push(
+                    bundle_id,
+                    CandidateSource::ExtensionPreference,
+                    format!("Preferred by local policy for .{}.", association.extension),
+                );
+            }
+        }
+        for bundle_id in &policy.recommendations.preferred_applications {
+            if association
+                .candidates
+                .iter()
+                .any(|candidate| candidate.bundle_id == bundle_id)
+            {
+                push(
+                    bundle_id,
+                    CandidateSource::GlobalPreference,
+                    "Preferred by local policy among profile candidates.".to_owned(),
+                );
+            }
+        }
+    }
+    for candidate in &association.candidates {
+        push(
+            candidate.bundle_id,
+            CandidateSource::Profile,
+            candidate.rationale.to_owned(),
+        );
+    }
+    candidates
+}
+
+fn required_application<'a>(policy: &'a Policy, extension: &str) -> Option<&'a str> {
+    policy
+        .protected_associations
+        .get(extension)
+        .map(String::as_str)
+        .or_else(|| {
+            policy
+                .protected_handlers
+                .iter()
+                .find(|handler| {
+                    handler.kind == AssociationKind::Extension
+                        && handler.identifier == extension
+                        && handler.role == HandlerRole::All
+                })
+                .map(|handler| handler.application.as_str())
+        })
+}
+
+fn policy_reasons(
+    policy: &Policy,
+    extension: &str,
+    bundle_id: &str,
+    required: Option<&str>,
+) -> Vec<String> {
+    let mut reasons = Vec::new();
+    if policy
+        .allowed_kinds
+        .as_ref()
+        .is_some_and(|kinds| !kinds.contains(&AssociationKind::Extension))
+    {
+        reasons.push("extension associations are not allowed".to_owned());
+    }
+    if policy
+        .allowed_extensions
+        .as_ref()
+        .is_some_and(|extensions| !extensions.contains(extension))
+    {
+        reasons.push(format!("extension .{extension} is not allowed"));
+    }
+    if policy
+        .allowed_applications
+        .as_ref()
+        .is_some_and(|applications| !applications.contains(bundle_id))
+    {
+        reasons.push(format!("application {bundle_id} is not allowed"));
+    }
+    if let Some(required) = required {
+        if required != bundle_id {
+            reasons.push(format!(
+                "protected association .{extension} requires {required}"
+            ));
+        }
+    }
+    reasons
 }
 
 fn developer_profile() -> ProfileDefinition {
@@ -570,5 +796,176 @@ mod tests {
         assert_eq!(recommendation.summary.unavailable, 1);
         assert_eq!(recommendation.plan.summary.total, 0);
         assert!(recommendation.proposed_config.associations.is_empty());
+    }
+
+    #[test]
+    fn extension_policy_preference_overrides_profile_order_and_current_handler() {
+        let profile = ProfileDefinition {
+            name: "test",
+            description: "test profile",
+            associations: vec![ProfileAssociation {
+                extension: "md",
+                candidates: vec![
+                    candidate("com.example.First", "profile first"),
+                    candidate("com.example.Current", "current"),
+                ],
+            }],
+        };
+        let applications = vec![
+            app("First", "com.example.First", &["md"]),
+            app("Current", "com.example.Current", &["md"]),
+            app("Team", "com.example.Team", &["md"]),
+        ];
+        let policy =
+            Policy::parse("version = 1\n[recommendations.extensions]\nmd = ['com.example.Team']\n")
+                .unwrap();
+        let recommendation = recommend_profile_with_policy(
+            &profile,
+            &applications,
+            |extension| {
+                Ok(Some(DefaultApplication {
+                    kind: AssociationKind::Extension,
+                    role: HandlerRole::All,
+                    extension: extension.to_owned(),
+                    name: Some("Current".to_owned()),
+                    path: Some("/Applications/Current.app".to_owned()),
+                    bundle_id: "com.example.Current".to_owned(),
+                }))
+            },
+            &policy,
+        )
+        .unwrap();
+        let result = &recommendation.recommendations[0];
+        assert_eq!(result.action, RecommendationAction::Change);
+        assert_eq!(
+            result.target.as_ref().unwrap().bundle_id,
+            "com.example.Team"
+        );
+        assert_eq!(
+            result.evidence[0].source,
+            CandidateSource::ExtensionPreference
+        );
+        assert!(result.evidence[0].selected);
+        assert_eq!(recommendation.plan.summary.changes, 1);
+    }
+
+    #[test]
+    fn application_allowlist_skips_disallowed_profile_candidates() {
+        let profile = ProfileDefinition {
+            name: "test",
+            description: "test profile",
+            associations: vec![ProfileAssociation {
+                extension: "md",
+                candidates: vec![
+                    candidate("com.example.Denied", "first"),
+                    candidate("com.example.Allowed", "second"),
+                ],
+            }],
+        };
+        let applications = vec![
+            app("Denied", "com.example.Denied", &["md"]),
+            app("Allowed", "com.example.Allowed", &["md"]),
+        ];
+        let policy =
+            Policy::parse("version = 1\nallowed_applications = ['com.example.Allowed']\n").unwrap();
+        let recommendation =
+            recommend_profile_with_policy(&profile, &applications, |_| Ok(None), &policy).unwrap();
+        let result = &recommendation.recommendations[0];
+        assert_eq!(
+            result.target.as_ref().unwrap().bundle_id,
+            "com.example.Allowed"
+        );
+        assert!(!result.evidence[0].policy_eligible);
+        assert!(result.evidence[0].policy_reasons[0].contains("not allowed"));
+        assert!(result.evidence[1].selected);
+        assert!(policy.assess(&recommendation.plan).allowed);
+    }
+
+    #[test]
+    fn global_policy_preference_reorders_existing_profile_candidates() {
+        let profile = ProfileDefinition {
+            name: "test",
+            description: "test profile",
+            associations: vec![ProfileAssociation {
+                extension: "md",
+                candidates: vec![
+                    candidate("com.example.First", "first"),
+                    candidate("com.example.Standard", "standard"),
+                ],
+            }],
+        };
+        let applications = vec![
+            app("First", "com.example.First", &["md"]),
+            app("Standard", "com.example.Standard", &["md"]),
+        ];
+        let policy = Policy::parse(
+            "version = 1\n[recommendations]\npreferred_applications = ['com.example.Standard']\n",
+        )
+        .unwrap();
+        let recommendation =
+            recommend_profile_with_policy(&profile, &applications, |_| Ok(None), &policy).unwrap();
+        let result = &recommendation.recommendations[0];
+        assert_eq!(
+            result.target.as_ref().unwrap().bundle_id,
+            "com.example.Standard"
+        );
+        assert_eq!(result.evidence[0].source, CandidateSource::GlobalPreference);
+    }
+
+    #[test]
+    fn protected_association_introduces_and_selects_the_required_application() {
+        let profile = ProfileDefinition {
+            name: "test",
+            description: "test profile",
+            associations: vec![ProfileAssociation {
+                extension: "md",
+                candidates: vec![candidate("com.example.Profile", "profile")],
+            }],
+        };
+        let applications = vec![
+            app("Profile", "com.example.Profile", &["md"]),
+            app("Required", "com.example.Required", &["md"]),
+        ];
+        let policy =
+            Policy::parse("version = 1\n[protected_associations]\nmd = 'com.example.Required'\n")
+                .unwrap();
+        let recommendation =
+            recommend_profile_with_policy(&profile, &applications, |_| Ok(None), &policy).unwrap();
+        let result = &recommendation.recommendations[0];
+        assert_eq!(
+            result.target.as_ref().unwrap().bundle_id,
+            "com.example.Required"
+        );
+        assert_eq!(result.evidence[0].source, CandidateSource::ProtectedPolicy);
+        assert!(!result.evidence[1].policy_eligible);
+        assert!(policy.assess(&recommendation.plan).allowed);
+    }
+
+    #[test]
+    fn reports_policy_blocked_when_only_installed_candidate_is_disallowed() {
+        let profile = ProfileDefinition {
+            name: "test",
+            description: "test profile",
+            associations: vec![ProfileAssociation {
+                extension: "md",
+                candidates: vec![candidate("com.example.Editor", "candidate")],
+            }],
+        };
+        let policy =
+            Policy::parse("version = 1\nallowed_applications = ['com.example.Other']\n").unwrap();
+        let recommendation = recommend_profile_with_policy(
+            &profile,
+            &[app("Editor", "com.example.Editor", &["md"])],
+            |_| Ok(None),
+            &policy,
+        )
+        .unwrap();
+        assert_eq!(
+            recommendation.recommendations[0].action,
+            RecommendationAction::PolicyBlocked
+        );
+        assert_eq!(recommendation.summary.policy_blocked, 1);
+        assert_eq!(recommendation.summary.unavailable, 0);
+        assert_eq!(recommendation.plan.summary.total, 0);
     }
 }
