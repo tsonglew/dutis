@@ -19,8 +19,10 @@ Use Dutis for macOS Launch Services associations. Preserve its
    When roles may differ, use `handler defaults` or
    `dutis_handler_defaults` to inspect the native Launch Services role matrix
    before planning a change.
-   If an event command reports a delivery failure, inspect `events pending`
-   and use `events replay` only after confirming the configured sink is healthy.
+   If an event command reports a delivery failure, inspect `events health`
+   (`dutis_event_health` over MCP), then inspect `events pending` only when
+   event-level details are necessary. Use `events replay` only after confirming
+   the configured sink is healthy.
    Preview `events archive` and `events purge` before using `--yes`; purge is
    permanent and applies only to events already moved into dead-letter storage.
 2. If the user asks for a general setup or is unsure which application to use,

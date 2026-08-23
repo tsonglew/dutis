@@ -4,7 +4,7 @@ use crate::application::{
 use crate::association::{AssociationKind, AssociationTarget, HandlerRole};
 use crate::config::DutisConfig;
 use crate::drift::DriftReport;
-use crate::events::{emit_best_effort, EventSource, EventType};
+use crate::events::{emit_best_effort, EventOutbox, EventSource, EventType};
 use crate::governance::{
     execute_governed_plan, AuditStore, GovernanceError, GovernanceErrorKind, LoadedPolicy,
     MutationChannel, MutationOperation, MutationRequest,
@@ -85,6 +85,7 @@ trait McpBackend {
     fn profiles(&mut self) -> Result<Value>;
     fn profile(&mut self, name: &str) -> Result<Value>;
     fn recommend(&mut self, name: &str) -> Result<Value>;
+    fn event_health(&mut self) -> Result<Value>;
     fn drift(&mut self, config: &DutisConfig) -> Result<Value>;
     fn query(&mut self, extension: &str) -> Result<Value>;
     fn get(&mut self, extension: &str) -> Result<Value>;
@@ -142,6 +143,11 @@ impl McpBackend for SystemBackend {
             "policy": policy.summary(),
             "recommendation": recommendation,
         }))
+    }
+
+    fn event_health(&mut self) -> Result<Value> {
+        serde_json::to_value(EventOutbox::from_environment()?.health()?)
+            .context("failed to serialize event delivery health")
     }
 
     fn drift(&mut self, config: &DutisConfig) -> Result<Value> {
@@ -387,6 +393,7 @@ impl<B: McpBackend> McpServer<B> {
                 }
                 self.backend.recommend(profile).map_err(operation_error)
             }
+            "dutis_event_health" => self.backend.event_health().map_err(operation_error),
             "dutis_drift" => {
                 let config = parse_config(arguments)?;
                 let report = self.backend.drift(&config).map_err(operation_error)?;
@@ -810,6 +817,12 @@ fn tool_definitions(allow_writes: bool) -> Vec<Value> {
             read_annotations.clone(),
         ),
         tool_definition(
+            "dutis_event_health",
+            "Summarize local event delivery backlog and dead letters without exposing event payloads.",
+            empty_schema.clone(),
+            read_annotations.clone(),
+        ),
+        tool_definition(
             "dutis_drift",
             "Check an inline configuration for drift and return a timestamped report with policy assessment without changing the system.",
             config_schema.clone(),
@@ -1039,6 +1052,15 @@ mod tests {
             Ok(json!({"profile": name, "proposal_only": true}))
         }
 
+        fn event_health(&mut self) -> Result<Value> {
+            Ok(json!({
+                "schema_version": 1,
+                "status": "healthy",
+                "pending": {"count": 0},
+                "dead_letters": {"count": 0}
+            }))
+        }
+
         fn drift(&mut self, _config: &DutisConfig) -> Result<Value> {
             Ok(json!({
                 "schema_version": 1,
@@ -1156,6 +1178,7 @@ mod tests {
         assert!(names.contains(&"dutis_profiles"));
         assert!(names.contains(&"dutis_profile"));
         assert!(names.contains(&"dutis_recommend"));
+        assert!(names.contains(&"dutis_event_health"));
         assert!(names.contains(&"dutis_drift"));
         assert!(names.contains(&"dutis_handler_get"));
         assert!(names.contains(&"dutis_handler_query"));
@@ -1200,6 +1223,23 @@ mod tests {
             missing.response.unwrap()["result"]["structuredContent"]["error"]["kind"],
             "not_found"
         );
+    }
+
+    #[test]
+    fn event_health_tool_is_read_only_and_payload_free() {
+        let mut server = McpServer::new(FakeBackend::new(), McpOptions::read_only());
+        let outcome = server.handle(request(
+            6,
+            "tools/call",
+            json!({"name": "dutis_event_health", "arguments": {}}),
+        ));
+        let response = outcome.response.unwrap();
+        let data = &response["result"]["structuredContent"]["data"];
+        assert_eq!(data["schema_version"], 1);
+        assert_eq!(data["status"], "healthy");
+        assert_eq!(data["pending"]["count"], 0);
+        assert!(data.get("payload").is_none());
+        assert_eq!(outcome.audit.unwrap().access, "read");
     }
 
     #[test]

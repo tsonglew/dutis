@@ -345,11 +345,30 @@ Acceptance criteria:
   `declares_extension` fields while additive typed fields identify every target
   consistently.
 
+## Phase 17: Event delivery health summaries
+
+Status: implemented for v2.21.0
+
+Provide compact operational visibility into the local event outbox without
+exposing the event bodies that may contain paths, identities, or plans.
+
+Acceptance criteria:
+
+- CLI and read-only MCP expose the same versioned health summary without event
+  IDs, payloads, retention reasons, or local storage paths.
+- Health includes pending and dead-letter counts, total and maximum attempts,
+  timestamp ranges, and stable breakdowns by event type and source.
+- Status distinguishes an empty healthy outbox, a retryable pending backlog,
+  and dead letters that require operator attention.
+- Metrics reuse strict outbox validation and fail closed on malformed,
+  oversized, mismatched, or non-regular records.
+- Health inspection never replays, archives, purges, or otherwise changes an
+  event record.
+
 ## Near-term engineering sequence
 
-1. Release Phase 16 and validate typed preference declarations against a
-   representative fleet application catalog.
-2. Add optional metrics summaries for event delivery health without exposing
-   payload contents.
-3. Add configurable profile overlays only after typed preference usage shows
+1. Release Phase 17 and validate health summaries in operator dashboards.
+2. Add configurable profile overlays only after typed preference usage shows
    which reusable association groups are stable across fleets.
+3. Evaluate bounded concurrency controls for replay after observing real sink
+   latency and failure patterns.

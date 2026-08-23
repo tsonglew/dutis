@@ -118,12 +118,17 @@ The default location is `event-outbox` inside `DUTIS_STATE_DIR`, or
 `DUTIS_EVENT_OUTBOX` to select another directory. JSONL write failures are not
 queued because the outbox is specifically a command-delivery queue.
 
-Inspect and replay the oldest pending events with:
+Inspect delivery health and replay the oldest pending events with:
 
 ```bash
+dutis events health --json
 dutis events pending --json
 dutis --event-command /absolute/path/to/handler events replay --limit 100 --json
 ```
+
+`events health` and the read-only MCP tool `dutis_event_health` expose only
+aggregate counts, attempts, timestamp ranges, and type/source buckets. They
+omit event IDs, payloads, retention reasons, and filesystem paths.
 
 See [durable event replay](event-replay.md) for persistence, retry, and
 at-least-once delivery guarantees, dead-letter retention, and explicit cleanup.

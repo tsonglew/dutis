@@ -145,6 +145,27 @@ fn pending_events_can_be_inspected_and_replayed_from_the_cli() {
     .unwrap();
     outbox.enqueue(&event).unwrap();
 
+    let health = dutis()
+        .args([
+            "--event-outbox",
+            outbox_path.to_str().unwrap(),
+            "events",
+            "health",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(health.status.success());
+    let response: Value = serde_json::from_slice(&health.stdout).unwrap();
+    assert_eq!(response["data"]["schema_version"], 1);
+    assert_eq!(response["data"]["status"], "degraded");
+    assert_eq!(response["data"]["pending"]["count"], 1);
+    assert_eq!(response["data"]["dead_letters"]["count"], 0);
+    assert!(response["data"].get("payload").is_none());
+    let health_output = String::from_utf8_lossy(&health.stdout);
+    assert!(!health_output.contains("drift_detected"));
+    assert!(!health_output.contains(&event.id));
+
     let pending = dutis()
         .args([
             "--event-outbox",
@@ -225,6 +246,19 @@ fn pending_events_can_be_inspected_and_replayed_from_the_cli() {
         serde_json::from_str(fs::read_to_string(received).unwrap().trim()).unwrap();
     assert_eq!(delivered["id"], event.id);
     assert!(outbox.pending().unwrap().is_empty());
+
+    let health = dutis()
+        .args([
+            "--event-outbox",
+            outbox_path.to_str().unwrap(),
+            "events",
+            "health",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    let response: Value = serde_json::from_slice(&health.stdout).unwrap();
+    assert_eq!(response["data"]["status"], "healthy");
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -296,6 +330,21 @@ fn event_archive_and_purge_require_explicit_confirmation() {
         .unwrap();
     assert!(archive.status.success());
     assert!(outbox.pending().unwrap().is_empty());
+
+    let health = dutis()
+        .args([
+            "--event-outbox",
+            outbox_path.to_str().unwrap(),
+            "events",
+            "health",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    let response: Value = serde_json::from_slice(&health.stdout).unwrap();
+    assert_eq!(response["data"]["status"], "attention_required");
+    assert_eq!(response["data"]["pending"]["count"], 0);
+    assert_eq!(response["data"]["dead_letters"]["count"], 1);
 
     let dead_letters = dutis()
         .args([
@@ -836,7 +885,7 @@ fn mcp_stdio_initializes_and_advertises_read_only_tools() {
     ));
     let mut child = dutis()
         .arg("mcp")
-        .env("DUTIS_STATE_DIR", state)
+        .env("DUTIS_STATE_DIR", &state)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -848,7 +897,8 @@ fn mcp_stdio_initializes_and_advertises_read_only_tools() {
         "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}\n",
         "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"dutis_history\",\"arguments\":{}}}\n",
         "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"dutis_policy\",\"arguments\":{}}}\n",
-        "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"dutis_profile\",\"arguments\":{\"profile\":\"minimal\"}}}\n"
+        "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"dutis_profile\",\"arguments\":{\"profile\":\"minimal\"}}}\n",
+        "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"dutis_event_health\",\"arguments\":{}}}\n"
     );
     child
         .stdin
@@ -864,13 +914,16 @@ fn mcp_stdio_initializes_and_advertises_read_only_tools() {
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(responses.len(), 5);
+    assert_eq!(responses.len(), 6);
     assert_eq!(responses[0]["result"]["protocolVersion"], "2024-11-05");
     let tools = responses[1]["result"]["tools"].as_array().unwrap();
     assert!(tools.iter().any(|tool| tool["name"] == "dutis_diff"));
     assert!(tools.iter().any(|tool| tool["name"] == "dutis_policy"));
     assert!(tools.iter().any(|tool| tool["name"] == "dutis_profiles"));
     assert!(tools.iter().any(|tool| tool["name"] == "dutis_recommend"));
+    assert!(tools
+        .iter()
+        .any(|tool| tool["name"] == "dutis_event_health"));
     assert!(tools.iter().any(|tool| tool["name"] == "dutis_drift"));
     assert!(tools
         .iter()
@@ -887,18 +940,30 @@ fn mcp_stdio_initializes_and_advertises_read_only_tools() {
         responses[4]["result"]["structuredContent"]["data"]["name"],
         "minimal"
     );
+    assert_eq!(
+        responses[5]["result"]["structuredContent"]["data"]["status"],
+        "healthy"
+    );
+    assert_eq!(
+        responses[5]["result"]["structuredContent"]["data"]["pending"]["count"],
+        0
+    );
 
     let audit = String::from_utf8(output.stderr)
         .unwrap()
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(audit.len(), 3);
+    assert_eq!(audit.len(), 4);
     assert_eq!(audit[0]["schema_version"], 1);
     assert_eq!(audit[0]["tool"], "dutis_history");
     assert_eq!(audit[1]["tool"], "dutis_policy");
     assert_eq!(audit[2]["tool"], "dutis_profile");
+    assert_eq!(audit[3]["tool"], "dutis_event_health");
     assert!(audit.iter().all(|event| event["access"] == "read"));
+    if state.exists() {
+        fs::remove_dir_all(state).unwrap();
+    }
 }
 
 #[test]

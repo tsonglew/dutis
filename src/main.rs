@@ -357,6 +357,7 @@ fn command_uses_json(command: &CliCommand) -> bool {
         },
         CliCommand::Watch(args) => args.json,
         CliCommand::Events(args) => match &args.command {
+            EventsCommand::Health(args) => args.json,
             EventsCommand::Pending(args) => args.json,
             EventsCommand::Replay(args) => args.json,
             EventsCommand::Archive(args) => args.json,
@@ -373,12 +374,45 @@ fn command_uses_json(command: &CliCommand) -> bool {
 
 fn run_events(args: EventsArgs) -> Result<(), CliError> {
     match args.command {
+        EventsCommand::Health(args) => run_events_health(args),
         EventsCommand::Pending(args) => run_events_pending(args),
         EventsCommand::Replay(args) => run_events_replay(args),
         EventsCommand::Archive(args) => run_events_archive(args),
         EventsCommand::DeadLetters(args) => run_events_dead_letters(args),
         EventsCommand::Purge(args) => run_events_purge(args),
     }
+}
+
+fn run_events_health(args: OutputArgs) -> Result<(), CliError> {
+    let health = event_outbox()?
+        .health()
+        .map_err(|error| CliError::operation(format!("failed to read event health: {error:#}")))?;
+    if args.json {
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "events",
+            data: health,
+        })?;
+    } else {
+        println!("Event delivery health: {}", health.status.as_str());
+        println!(
+            "Pending: {} (attempts={}, max_attempts={})",
+            health.pending.count, health.pending.total_attempts, health.pending.max_attempts
+        );
+        println!(
+            "Dead letters: {} (attempts={}, max_attempts={})",
+            health.dead_letters.count,
+            health.dead_letters.total_attempts,
+            health.dead_letters.max_attempts
+        );
+        if let Some(oldest) = health.pending.oldest_queued_at {
+            println!("Oldest pending: {oldest}");
+        }
+        if let Some(oldest) = health.dead_letters.oldest_dead_lettered_at {
+            println!("Oldest dead letter: {oldest}");
+        }
+    }
+    Ok(())
 }
 
 fn run_events_pending(args: OutputArgs) -> Result<(), CliError> {
