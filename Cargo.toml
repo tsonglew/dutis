@@ -1,8 +1,9 @@
 [package]
 name = "dutis"
-version = "2.14.0"
+version = "2.15.0"
 edition = "2021"
 rust-version = "1.88"
+default-run = "dutis"
 description = "A comprehensive macOS application File Extension Manager and default app setter written in Rust"
 authors = ["Tsong Lew <tsonglew@gmail.com>"]
 license = "MIT"
@@ -14,6 +15,10 @@ categories = ["command-line-utilities", "system"]
 [[bin]]
 name = "dutis"
 path = "src/main.rs"
+
+[[bin]]
+name = "dutis-event-http"
+path = "src/bin/dutis-event-http.rs"
 
 [dependencies]
 anyhow = "1.0"

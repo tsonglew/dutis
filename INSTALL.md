@@ -8,20 +8,21 @@
 brew install tsonglew/tap/dutis
 ```
 
-The formula installs the universal `dutis` binary and its `duti` dependency.
+The formula installs the universal `dutis` and `dutis-event-http` binaries plus
+the `duti` dependency.
 
 ## Alternative Installation Methods
 
 ### From Pre-built Binary
 
 1. Download the latest release from [GitHub Releases](https://github.com/tsonglew/dutis/releases)
-2. Extract the binary
-3. Move to a directory in your PATH:
+2. Extract the binaries
+3. Move them to a directory in your PATH:
 
    ```bash
-   sudo mv dutis /usr/local/bin/
+   sudo mv dutis dutis-event-http /usr/local/bin/
    # or
-   sudo mv dutis /opt/homebrew/bin/
+   sudo mv dutis dutis-event-http /opt/homebrew/bin/
    ```
 
 ### From Source
@@ -55,6 +56,7 @@ cargo install --path .
 
 ```bash
 dutis --help
+dutis-event-http --version
 ```
 
 ### First Run

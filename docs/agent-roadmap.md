@@ -218,11 +218,33 @@ Acceptance criteria:
 - Role matching recognizes that an editor can satisfy a viewer query, while
   shell and editor capabilities remain distinct.
 
+## Phase 11: HTTPS event adapter
+
+Status: implemented for v2.15.0
+
+Ship an optional network adapter as an external event command while keeping
+transport secrets outside Dutis configuration, plans, and audit records.
+
+Acceptance criteria:
+
+- `dutis-event-http` receives one current-schema event on stdin and delivers an
+  HTTPS POST without gaining any mutation capability.
+- Endpoints, Bearer credentials, timeouts, and retries are configured only by
+  adapter-specific environment variables.
+- Endpoint and credential values never appear in child process arguments,
+  check output, or delivery errors; private temporary request files are removed
+  after delivery.
+- Requests include event identity and idempotency headers, enforce a bounded
+  input size, reject plaintext HTTP, do not follow redirects, and discard
+  response bodies.
+- Release archives and the Homebrew formula install both universal binaries;
+  fake-transport tests cover success, sanitization, and rejection paths.
+
 ## Near-term engineering sequence
 
-1. Release Phase 10 and validate metadata coverage across native and third-party
-   applications on supported macOS releases.
-2. Add optional network adapters as external event commands, keeping transport
-   credentials outside Dutis configuration and audit records.
-3. Explore native Launch Services read APIs for richer role-specific default
+1. Release Phase 11 and validate HTTPS delivery against representative webhook
+   receivers and long-running LaunchAgents.
+2. Explore native Launch Services read APIs for richer role-specific default
    verification where `duti` exposes only a single default handler.
+3. Add durable replay tooling for failed external event deliveries without
+   coupling observability failures to association mutations.

@@ -38,6 +38,12 @@ code: require a user-chosen trusted absolute path, and never generate or enable
 one implicitly. Events may contain application paths, bundle IDs, requester
 identity, and complete plans, but never approval tokens.
 
+For HTTPS delivery, prefer the packaged `dutis-event-http` external command.
+Keep `DUTIS_HTTP_ENDPOINT` and `DUTIS_HTTP_BEARER_TOKEN` out of Dutis TOML,
+plans, prompts, and audit records. Run `dutis-event-http --check --json` before
+enabling it, and use a Keychain-backed wrapper for a LaunchAgent rather than
+persisting transport credentials in its plist.
+
 For monitoring requests, use `dutis_drift` or `dutis watch <config> --once`
 first. Explain whether the report is `in_sync`, `drift_detected`, or
 `unresolved`. Do not enable `--remediate` or install a remediating LaunchAgent

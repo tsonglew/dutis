@@ -19,13 +19,14 @@ formula = <<~RUBY
     depends_on :macos
 
     def install
-      bin.install "dutis"
+      bin.install "dutis", "dutis-event-http"
       pkgshare.install "skills"
       pkgshare.install "dutis.policy.example.toml"
     end
 
     test do
       assert_match version.to_s, shell_output("\#{bin}/dutis --version")
+      assert_match version.to_s, shell_output("\#{bin}/dutis-event-http --version")
     end
   end
 RUBY

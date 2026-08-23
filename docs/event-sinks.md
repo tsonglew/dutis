@@ -1,6 +1,6 @@
 # Event sinks
 
-Dutis v2.13 can deliver versioned drift and mutation events to a private JSONL
+Dutis can deliver versioned drift and mutation events to a private JSONL
 file, a trusted local executable, or both. This gives agents and automation a
 stable interface without scraping terminal output or watching audit folders.
 
@@ -94,6 +94,10 @@ Example handler:
 #!/bin/sh
 exec /usr/bin/logger -t dutis-event
 ```
+
+The packaged [`dutis-event-http`](http-event-adapter.md) command provides an
+HTTPS adapter with environment-only endpoint and credential configuration,
+sanitized errors, timeouts, retries, and idempotency headers.
 
 ## Failure behavior
 
