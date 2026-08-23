@@ -630,6 +630,9 @@ fn mcp_stdio_initializes_and_advertises_read_only_tools() {
     assert!(tools.iter().any(|tool| tool["name"] == "dutis_profiles"));
     assert!(tools.iter().any(|tool| tool["name"] == "dutis_recommend"));
     assert!(tools.iter().any(|tool| tool["name"] == "dutis_drift"));
+    assert!(tools
+        .iter()
+        .any(|tool| tool["name"] == "dutis_handler_query"));
     assert!(!tools.iter().any(|tool| tool["name"] == "dutis_apply"));
     assert_eq!(
         responses[3]["result"]["structuredContent"]["data"]["approval_mode"],

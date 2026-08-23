@@ -198,10 +198,31 @@ Acceptance criteria:
 - LaunchAgent installation preserves normalized sink paths without persisting
   approval tokens.
 
+## Phase 10: Typed application metadata
+
+Status: implemented for v2.14.0
+
+Extend application discovery beyond filename extensions while keeping handler
+registrations distinct from UTI definitions.
+
+Acceptance criteria:
+
+- Parse role-aware document registrations for extensions, UTIs, and MIME types,
+  plus URL-scheme registrations.
+- Parse imported and exported UTI identifiers, conformance, filename tags, and
+  MIME tags as separate type-definition evidence.
+- Preserve the legacy `extensions` field while adding stable typed metadata to
+  application JSON.
+- CLI and MCP expose compact typed handler queries with exact matching
+  declarations and normalized identifiers.
+- Role matching recognizes that an editor can satisfy a viewer query, while
+  shell and editor capabilities remain distinct.
+
 ## Near-term engineering sequence
 
-1. Release Phase 9 and validate long-running event delivery and log rotation.
-2. Extend application metadata discovery beyond filename extensions where
-   Launch Services exposes reliable declarations.
-3. Add optional network adapters as external event commands, keeping transport
+1. Release Phase 10 and validate metadata coverage across native and third-party
+   applications on supported macOS releases.
+2. Add optional network adapters as external event commands, keeping transport
    credentials outside Dutis configuration and audit records.
+3. Explore native Launch Services read APIs for richer role-specific default
+   verification where `duti` exposes only a single default handler.

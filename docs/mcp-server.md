@@ -28,13 +28,16 @@ A typical MCP client configuration is:
 
 The server advertises these read tools:
 
-- `dutis_list`: discover installed applications and declared extensions.
+- `dutis_list`: discover installed applications, typed handlers, and UTI
+  definitions.
 - `dutis_profiles`: list built-in profiles and ordered candidates.
 - `dutis_profile`: inspect one profile by its `profile` name.
 - `dutis_recommend`: generate an explainable proposal, plan digest, and policy assessment by `profile` name.
 - `dutis_drift`: check inline TOML for drift and return a timestamped report with policy assessment.
 - `dutis_query`: find installed handlers for one extension.
 - `dutis_get`: inspect the current default handler.
+- `dutis_handler_query`: find applications that explicitly register a matching
+  extension, UTI, MIME type, URL scheme, and compatible role.
 - `dutis_handler_get`: inspect an extension, UTI, MIME type, or URL scheme with
   an optional `all`, `viewer`, `editor`, or `shell` role.
 - `dutis_diff`: parse inline versioned TOML and return a deterministic plan.
@@ -44,11 +47,11 @@ The server advertises these read tools:
 - `dutis_policy_check`: evaluate an inline TOML plan against policy.
 - `dutis_audit`: inspect persistent mutation audit records.
 
-`dutis_handler_get` accepts `kind`, `identifier`, and optional `role` fields.
-The kind uses `url_scheme` in JSON; URL schemes accept only the default `all`
-role. `dutis_diff` accepts `config_toml` rather than a filesystem path. This keeps the
-MCP surface independent from unrestricted file access and makes the exact input
-part of the reviewed tool call.
+`dutis_handler_query` and `dutis_handler_get` accept `kind`, `identifier`, and
+optional `role` fields. The kind uses `url_scheme` in JSON; URL schemes accept
+only the default `all` role. `dutis_diff` accepts `config_toml` rather than a
+filesystem path. This keeps the MCP surface independent from unrestricted file
+access and makes the exact input part of the reviewed tool call.
 
 Profile recommendations are also read-only. A recommendation is evidence, not
 approval: it does not register a mutation tool call or change an association.
