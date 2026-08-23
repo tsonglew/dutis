@@ -40,6 +40,8 @@ The server advertises these read tools:
   extension, UTI, MIME type, URL scheme, and compatible role.
 - `dutis_handler_get`: inspect an extension, UTI, MIME type, or URL scheme with
   an optional `all`, `viewer`, `editor`, or `shell` role.
+- `dutis_handler_defaults`: read the complete role-specific default matrix
+  directly from macOS Launch Services.
 - `dutis_diff`: parse inline versioned TOML and return a deterministic plan.
 - `dutis_history`: list local safety snapshots.
 - `dutis_rollback_plan`: preview a snapshot rollback and return its digest.
@@ -52,6 +54,11 @@ optional `role` fields. The kind uses `url_scheme` in JSON; URL schemes accept
 only the default `all` role. `dutis_diff` accepts `config_toml` rather than a
 filesystem path. This keeps the MCP surface independent from unrestricted file
 access and makes the exact input part of the reviewed tool call.
+
+`dutis_handler_defaults` accepts `kind` and `identifier` without a role. It
+returns every applicable native role and the resolved content type for
+extension and MIME queries. See
+[native Launch Services reads](native-launch-services.md).
 
 Profile recommendations are also read-only. A recommendation is evidence, not
 approval: it does not register a mutation tool call or change an association.

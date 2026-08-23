@@ -26,6 +26,7 @@ A Rust application for inspecting and safely managing macOS default handlers for
 - 🔗 **Typed Associations**: Manage extensions, UTIs, MIME types, URL schemes, and Launch Services roles through one verified pipeline
 - 📡 **Event Sinks**: Stream versioned drift and mutation lifecycle events to private JSONL logs or trusted local commands
 - 🌐 **HTTPS Event Adapter**: Forward events with environment-only credentials, bounded retries, and idempotency headers
+- 🍎 **Native Role Inspection**: Read separate viewer, editor, and shell defaults directly from macOS Launch Services
 
 ## Installation
 
@@ -100,6 +101,7 @@ dutis handler query url-scheme https
 dutis handler get uti public.plain-text --role viewer
 dutis handler get mime text/plain --role editor
 dutis handler get url-scheme https
+dutis handler defaults extension txt --json
 
 # Emit a versioned JSON response
 dutis query json --json
@@ -139,6 +141,10 @@ Info.plist declarations. Full `list --json` output also includes each
 application's registered handlers and imported/exported type definitions. See
 [application metadata](docs/application-metadata.md) for evidence and role
 matching rules.
+
+Role-specific `handler get` queries and verification use native macOS Launch
+Services reads. `handler defaults` returns the complete role matrix. See
+[native Launch Services reads](docs/native-launch-services.md).
 
 Create, inspect, and restore local snapshots:
 

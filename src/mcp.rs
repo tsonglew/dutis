@@ -9,6 +9,7 @@ use crate::governance::{
     execute_governed_plan, AuditStore, GovernanceError, GovernanceErrorKind, LoadedPolicy,
     MutationChannel, MutationOperation, MutationRequest,
 };
+use crate::launch_services;
 use crate::planner::{build_plan, AssociationPlan};
 use crate::profiles::{find_profile, profiles, recommend_profile};
 use crate::snapshot::{build_rollback_plan, SnapshotReason, SnapshotStore};
@@ -89,6 +90,7 @@ trait McpBackend {
     fn get(&mut self, extension: &str) -> Result<Value>;
     fn query_handler(&mut self, association: &AssociationTarget) -> Result<Value>;
     fn get_handler(&mut self, association: &AssociationTarget) -> Result<Value>;
+    fn handler_defaults(&mut self, association: &AssociationTarget) -> Result<Value>;
     fn plan(&mut self, config: &DutisConfig) -> Result<AssociationPlan>;
     fn apply(
         &mut self,
@@ -176,6 +178,14 @@ impl McpBackend for SystemBackend {
     fn get_handler(&mut self, association: &AssociationTarget) -> Result<Value> {
         let default = system::get_default_handler(association)?;
         Ok(json!({"association": association, "default": default}))
+    }
+
+    fn handler_defaults(&mut self, association: &AssociationTarget) -> Result<Value> {
+        serde_json::to_value(launch_services::query_role_defaults(
+            association.kind,
+            &association.identifier,
+        )?)
+        .context("failed to serialize native handler defaults")
     }
 
     fn plan(&mut self, config: &DutisConfig) -> Result<AssociationPlan> {
@@ -403,6 +413,12 @@ impl<B: McpBackend> McpServer<B> {
                     .query_handler(&association)
                     .map_err(operation_error)
             }
+            "dutis_handler_defaults" => {
+                let association = parse_handler_identity(arguments)?;
+                self.backend
+                    .handler_defaults(&association)
+                    .map_err(operation_error)
+            }
             "dutis_diff" => {
                 let config = parse_config(arguments)?;
                 let plan = self.backend.plan(&config).map_err(operation_error)?;
@@ -558,18 +574,7 @@ fn argument_string<'a>(
 fn parse_association(
     arguments: &Map<String, Value>,
 ) -> std::result::Result<AssociationTarget, ToolError> {
-    let kind = match argument_string(arguments, "kind")? {
-        "extension" => AssociationKind::Extension,
-        "uti" => AssociationKind::Uti,
-        "mime" => AssociationKind::Mime,
-        "url_scheme" => AssociationKind::UrlScheme,
-        value => {
-            return Err(ToolError::new(
-                "invalid_arguments",
-                format!("unsupported association kind '{value}'"),
-            ))
-        }
-    };
+    let kind = parse_association_kind(arguments)?;
     let role = match arguments
         .get("role")
         .and_then(Value::as_str)
@@ -588,6 +593,34 @@ fn parse_association(
     };
     AssociationTarget::new(kind, argument_string(arguments, "identifier")?, role)
         .map_err(|error| ToolError::new("invalid_arguments", error.to_string()))
+}
+
+fn parse_handler_identity(
+    arguments: &Map<String, Value>,
+) -> std::result::Result<AssociationTarget, ToolError> {
+    AssociationTarget::new(
+        parse_association_kind(arguments)?,
+        argument_string(arguments, "identifier")?,
+        HandlerRole::All,
+    )
+    .map_err(|error| ToolError::new("invalid_arguments", error.to_string()))
+}
+
+fn parse_association_kind(
+    arguments: &Map<String, Value>,
+) -> std::result::Result<AssociationKind, ToolError> {
+    Ok(match argument_string(arguments, "kind")? {
+        "extension" => AssociationKind::Extension,
+        "uti" => AssociationKind::Uti,
+        "mime" => AssociationKind::Mime,
+        "url_scheme" => AssociationKind::UrlScheme,
+        value => {
+            return Err(ToolError::new(
+                "invalid_arguments",
+                format!("unsupported association kind '{value}'"),
+            ))
+        }
+    })
 }
 
 fn parse_config(arguments: &Map<String, Value>) -> std::result::Result<DutisConfig, ToolError> {
@@ -714,6 +747,15 @@ fn tool_definitions(allow_writes: bool) -> Vec<Value> {
         "required": ["kind", "identifier"],
         "additionalProperties": false,
     });
+    let handler_identity_schema = json!({
+        "type": "object",
+        "properties": {
+            "kind": {"type": "string", "enum": ["extension", "uti", "mime", "url_scheme"]},
+            "identifier": {"type": "string", "minLength": 1}
+        },
+        "required": ["kind", "identifier"],
+        "additionalProperties": false,
+    });
     let config_schema = json!({
         "type": "object",
         "properties": {"config_toml": {"type": "string", "minLength": 1}},
@@ -791,6 +833,12 @@ fn tool_definitions(allow_writes: bool) -> Vec<Value> {
             "dutis_handler_get",
             "Read the current handler for an extension, UTI, MIME type, or URL scheme.",
             handler_schema,
+            read_annotations.clone(),
+        ),
+        tool_definition(
+            "dutis_handler_defaults",
+            "Read all role-specific defaults directly from macOS Launch Services.",
+            handler_identity_schema,
             read_annotations.clone(),
         ),
         tool_definition(
@@ -1011,6 +1059,19 @@ mod tests {
             Ok(json!({"association": association, "default": null}))
         }
 
+        fn handler_defaults(&mut self, association: &AssociationTarget) -> Result<Value> {
+            Ok(json!({
+                "schema_version": 1,
+                "kind": association.kind,
+                "identifier": association.identifier,
+                "content_type": "public.text",
+                "defaults": [
+                    {"role": "viewer", "bundle_id": "com.example.Viewer"},
+                    {"role": "editor", "bundle_id": "com.example.Editor"}
+                ]
+            }))
+        }
+
         fn plan(&mut self, _config: &DutisConfig) -> Result<AssociationPlan> {
             Ok(self.plan.clone())
         }
@@ -1094,6 +1155,7 @@ mod tests {
         assert!(names.contains(&"dutis_drift"));
         assert!(names.contains(&"dutis_handler_get"));
         assert!(names.contains(&"dutis_handler_query"));
+        assert!(names.contains(&"dutis_handler_defaults"));
         assert!(names.contains(&"dutis_policy_check"));
         assert!(names.contains(&"dutis_audit"));
         assert!(!names.contains(&"dutis_apply"));
@@ -1206,6 +1268,25 @@ mod tests {
         assert_eq!(
             response["result"]["structuredContent"]["data"]["association"]["kind"],
             "mime"
+        );
+        assert_eq!(outcome.audit.unwrap().access, "read");
+    }
+
+    #[test]
+    fn native_handler_defaults_are_exposed_as_a_read_only_tool() {
+        let mut server = McpServer::new(FakeBackend::new(), McpOptions::read_only());
+        let outcome = server.handle(request(
+            11,
+            "tools/call",
+            json!({
+                "name": "dutis_handler_defaults",
+                "arguments": {"kind": "extension", "identifier": "txt"}
+            }),
+        ));
+        let response = outcome.response.unwrap();
+        assert_eq!(
+            response["result"]["structuredContent"]["data"]["defaults"][1]["role"],
+            "editor"
         );
         assert_eq!(outcome.audit.unwrap().access, "read");
     }

@@ -41,10 +41,11 @@ jobs:
       - name: Check packaging scripts
         run: |
           ruby -c scripts/render_homebrew_formula.rb
+          package_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
           ruby scripts/render_homebrew_formula.rb \
-            2.15.0 \
+            "${package_version}" \
             aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-            https://github.com/tsonglew/dutis/releases/download/v2.15.0/dutis-v2.15.0-macos-universal.tar.gz \
+            "https://github.com/tsonglew/dutis/releases/download/v${package_version}/dutis-v${package_version}-macos-universal.tar.gz" \
             "${RUNNER_TEMP}/dutis.rb"
           grep -F 'bin.install "dutis", "dutis-event-http"' "${RUNNER_TEMP}/dutis.rb"
           bash -n scripts/get_app_extensions.sh

@@ -7,6 +7,7 @@ pub mod events;
 pub mod governance;
 pub mod http_adapter;
 pub mod launch_agent;
+pub mod launch_services;
 pub mod mcp;
 pub mod planner;
 pub mod plist_parser;

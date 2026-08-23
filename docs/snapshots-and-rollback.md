@@ -14,7 +14,7 @@ Snapshots are JSON files stored at:
 Set `DUTIS_STATE_DIR` to use another state directory, which is useful for CI,
 isolated agent runs, or backups. Files are written atomically with owner-only
 permissions on Unix. They contain normalized association kinds, identifiers,
-roles, bundle identifiers, application paths reported by `duti`, timestamps,
+roles, bundle identifiers, any application paths reported by the read backend, timestamps,
 and plan digests. They do not contain tokens or credentials. Older extension-
 only snapshots remain readable; missing kind and role fields default to
 `extension` and `all`.
