@@ -61,10 +61,10 @@ watcher, and writes:
 ```
 
 If `DUTIS_STATE_DIR` is set while installing, logs and state use that directory.
-If `--event-log`, `--event-command`, `DUTIS_EVENT_LOG`, or
-`DUTIS_EVENT_COMMAND` is set while installing, the normalized sink paths are
-copied into the LaunchAgent environment. Reinstall the agent after changing a
-sink.
+If `--event-log`, `--event-command`, `--event-outbox`, `DUTIS_EVENT_LOG`,
+`DUTIS_EVENT_COMMAND`, or `DUTIS_EVENT_OUTBOX` is set while installing, the
+normalized sink paths are copied into the LaunchAgent environment. Reinstall
+the agent after changing a sink.
 The LaunchAgent plist is stored at:
 
 ```text

@@ -26,6 +26,7 @@ A Rust application for inspecting and safely managing macOS default handlers for
 - 🔗 **Typed Associations**: Manage extensions, UTIs, MIME types, URL schemes, and Launch Services roles through one verified pipeline
 - 📡 **Event Sinks**: Stream versioned drift and mutation lifecycle events to private JSONL logs or trusted local commands
 - 🌐 **HTTPS Event Adapter**: Forward events with environment-only credentials, bounded retries, and idempotency headers
+- 📦 **Durable Event Replay**: Queue failed command deliveries locally and replay them without repeating the original mutation
 - 🍎 **Native Role Inspection**: Read separate viewer, editor, and shell defaults directly from macOS Launch Services
 
 ## Installation
@@ -222,8 +223,8 @@ dutis --event-command /absolute/path/to/event-handler apply dutis.toml \
 ```
 
 Event options are global and can appear before or after a subcommand. The same
-settings can be provided through `DUTIS_EVENT_LOG` and
-`DUTIS_EVENT_COMMAND`. See [event sinks](docs/event-sinks.md) for the schema,
+settings can be provided through `DUTIS_EVENT_LOG`, `DUTIS_EVENT_COMMAND`, and
+`DUTIS_EVENT_OUTBOX`. See [event sinks](docs/event-sinks.md) for the schema,
 command contract, LaunchAgent behavior, and delivery guarantees.
 
 To forward events over HTTPS without placing credentials in Dutis arguments,
@@ -235,7 +236,16 @@ export DUTIS_HTTP_ENDPOINT='https://events.example.com/hooks/dutis'
 export DUTIS_HTTP_BEARER_TOKEN='replace-with-a-scoped-token'
 export DUTIS_EVENT_COMMAND="$(command -v dutis-event-http)"
 dutis-event-http --check --json
+
+# Inspect and replay failed command deliveries
+dutis events pending --json
+dutis events replay --limit 100 --json
 ```
+
+Failed event-command deliveries are stored automatically under the Dutis state
+directory. Override that location with `--event-outbox` or
+`DUTIS_EVENT_OUTBOX`. Replay keeps the original event ID so remote consumers
+can deduplicate retries. See [durable event replay](docs/event-replay.md).
 
 All write paths enforce the same local policy before mutation and record the
 requester, reviewed plan, result, and verification. See the
@@ -247,7 +257,8 @@ Applications can be selected by exact bundle ID, exact application path, or an
 unambiguous application name. JSON responses use API version `1`. Exit codes are
 `0` for success, `2` for usage errors, `3` for no match, `4` for ambiguous
 selectors, `5` for an unavailable dependency, and `6` for operation failure.
-Declarative apply also uses `7` for a stale plan and `8` for partial failure.
+Declarative apply uses `7` for a stale plan. Apply and event replay use `8` for
+partial failure.
 Policy denial uses exit code `9`.
 
 The product and engineering sequence for declarative configuration, rollback,

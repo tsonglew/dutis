@@ -1,11 +1,12 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{
-    ApplyArgs, Cli, CliCommand, ConfigArgs, ExtensionArgs, HandlerArgs, HandlerCommand,
-    HandlerDefaultsArgs, HandlerGetArgs, HandlerSetArgs, LaunchAgentArgs, LaunchAgentCommand,
-    LaunchAgentInstallArgs, McpArgs, OutputArgs, PolicyArgs, PolicyCheckArgs, PolicyCommand,
-    ProfileArgs, ProfileCommand, ProfileShowArgs, RecommendArgs, RollbackArgs, SetArgs,
-    SnapshotArgs, SnapshotCommand, SnapshotCreateArgs, WatchArgs,
+    ApplyArgs, Cli, CliCommand, ConfigArgs, EventReplayArgs, EventsArgs, EventsCommand,
+    ExtensionArgs, HandlerArgs, HandlerCommand, HandlerDefaultsArgs, HandlerGetArgs,
+    HandlerSetArgs, LaunchAgentArgs, LaunchAgentCommand, LaunchAgentInstallArgs, McpArgs,
+    OutputArgs, PolicyArgs, PolicyCheckArgs, PolicyCommand, ProfileArgs, ProfileCommand,
+    ProfileShowArgs, RecommendArgs, RollbackArgs, SetArgs, SnapshotArgs, SnapshotCommand,
+    SnapshotCreateArgs, WatchArgs,
 };
 use colored::*;
 use dutis::application::{
@@ -16,8 +17,8 @@ use dutis::association::{AssociationKind, AssociationTarget, HandlerRole};
 use dutis::config::DutisConfig;
 use dutis::drift::{send_macos_notification, DriftReport, DriftState, DriftTracker};
 use dutis::events::{
-    configure_process_sinks, emit_best_effort, EventSource, EventType, EVENT_COMMAND_ENV,
-    EVENT_LOG_ENV,
+    configure_process_sinks_with_outbox, emit_best_effort, EventDispatcher, EventOutbox,
+    EventSource, EventType, EVENT_COMMAND_ENV, EVENT_LOG_ENV, EVENT_OUTBOX_ENV,
 };
 use dutis::governance::{
     execute_governed_plan, ApprovalMode, AuditStore, GovernanceErrorKind, GovernedMutation,
@@ -241,9 +242,12 @@ fn main() -> ExitCode {
         .map(command_name)
         .unwrap_or("interactive");
     let json = cli.command.as_ref().is_some_and(command_uses_json);
-    let event_setup =
-        configure_process_sinks(cli.event_log.as_deref(), cli.event_command.as_deref())
-            .map_err(|error| CliError::usage(format!("invalid event sink: {error:#}")));
+    let event_setup = configure_process_sinks_with_outbox(
+        cli.event_log.as_deref(),
+        cli.event_command.as_deref(),
+        cli.event_outbox.as_deref(),
+    )
+    .map_err(|error| CliError::usage(format!("invalid event sink: {error:#}")));
 
     match event_setup.and_then(|_| dispatch(cli.command)) {
         Ok(()) => ExitCode::SUCCESS,
@@ -289,6 +293,7 @@ fn dispatch(command: Option<CliCommand>) -> Result<(), CliError> {
         Some(CliCommand::Recommend(args)) => run_recommend(args),
         Some(CliCommand::Handler(args)) => run_handler(args),
         Some(CliCommand::Watch(args)) => run_watch(args),
+        Some(CliCommand::Events(args)) => run_events(args),
         Some(CliCommand::LaunchAgent(args)) => run_launch_agent(args),
         Some(CliCommand::Mcp(args)) => run_mcp(args),
         Some(CliCommand::Doctor(args)) => run_doctor(args),
@@ -313,6 +318,7 @@ fn command_name(command: &CliCommand) -> &'static str {
         CliCommand::Recommend(_) => "recommend",
         CliCommand::Handler(_) => "handler",
         CliCommand::Watch(_) => "watch",
+        CliCommand::Events(_) => "events",
         CliCommand::LaunchAgent(_) => "launch-agent",
         CliCommand::Mcp(_) => "mcp",
         CliCommand::Doctor(_) => "doctor",
@@ -348,12 +354,89 @@ fn command_uses_json(command: &CliCommand) -> bool {
             HandlerCommand::Set(args) => args.json,
         },
         CliCommand::Watch(args) => args.json,
+        CliCommand::Events(args) => match &args.command {
+            EventsCommand::Pending(args) => args.json,
+            EventsCommand::Replay(args) => args.json,
+        },
         CliCommand::LaunchAgent(args) => match &args.command {
             LaunchAgentCommand::Install(args) => args.json,
             LaunchAgentCommand::Uninstall(args) | LaunchAgentCommand::Status(args) => args.json,
         },
         CliCommand::Mcp(_) => false,
     }
+}
+
+fn run_events(args: EventsArgs) -> Result<(), CliError> {
+    match args.command {
+        EventsCommand::Pending(args) => run_events_pending(args),
+        EventsCommand::Replay(args) => run_events_replay(args),
+    }
+}
+
+fn run_events_pending(args: OutputArgs) -> Result<(), CliError> {
+    let outbox = EventOutbox::from_environment().map_err(|error| {
+        CliError::operation(format!("failed to locate event outbox: {error:#}"))
+    })?;
+    let pending = outbox
+        .pending()
+        .map_err(|error| CliError::operation(format!("failed to read event outbox: {error:#}")))?;
+    if args.json {
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "events",
+            data: &pending,
+        })?;
+    } else if pending.is_empty() {
+        println!("No pending event deliveries.");
+    } else {
+        for event in pending {
+            println!(
+                "{}\t{}\tattempts={}\t{}",
+                event.id,
+                event.event_type.as_str(),
+                event.attempts,
+                event.last_attempted_at
+            );
+        }
+    }
+    Ok(())
+}
+
+fn run_events_replay(args: EventReplayArgs) -> Result<(), CliError> {
+    let dispatcher = EventDispatcher::from_environment()
+        .map_err(|error| CliError::usage(format!("invalid event sink: {error:#}")))?;
+    let command = dispatcher.command().ok_or_else(|| {
+        CliError::usage("events replay requires --event-command or DUTIS_EVENT_COMMAND")
+    })?;
+    let outbox = EventOutbox::from_environment().map_err(|error| {
+        CliError::operation(format!("failed to locate event outbox: {error:#}"))
+    })?;
+    let limit = usize::try_from(args.limit)
+        .map_err(|_| CliError::usage("event replay limit is too large for this platform"))?;
+    let report = outbox.replay(command, limit).map_err(|error| {
+        CliError::operation(format!("failed to replay pending events: {error:#}"))
+    })?;
+    if report.failed > 0 {
+        let details = serde_json::to_value(&report)
+            .map_err(|error| CliError::operation(format!("failed to serialize report: {error}")))?;
+        return Err(CliError::partial_failure(
+            format!("{} event deliveries failed", report.failed),
+            details,
+        ));
+    }
+    if args.json {
+        write_json(&JsonEnvelope {
+            api_version: API_VERSION,
+            command: "events",
+            data: report,
+        })?;
+    } else {
+        println!(
+            "Replayed {} event(s); {} remain pending.",
+            report.delivered, report.remaining
+        );
+    }
+    Ok(())
 }
 
 fn run_handler(args: HandlerArgs) -> Result<(), CliError> {
@@ -780,7 +863,7 @@ fn run_launch_agent_install(args: LaunchAgentInstallArgs) -> Result<(), CliError
             value.to_string_lossy().into_owned(),
         );
     }
-    for name in [EVENT_LOG_ENV, EVENT_COMMAND_ENV] {
+    for name in [EVENT_LOG_ENV, EVENT_COMMAND_ENV, EVENT_OUTBOX_ENV] {
         if let Some(value) = std::env::var_os(name).filter(|value| !value.is_empty()) {
             environment.insert(name.to_owned(), value.to_string_lossy().into_owned());
         }

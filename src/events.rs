@@ -2,7 +2,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -12,6 +12,10 @@ use time::OffsetDateTime;
 pub const EVENT_SCHEMA_VERSION: u32 = 1;
 pub const EVENT_LOG_ENV: &str = "DUTIS_EVENT_LOG";
 pub const EVENT_COMMAND_ENV: &str = "DUTIS_EVENT_COMMAND";
+pub const EVENT_OUTBOX_ENV: &str = "DUTIS_EVENT_OUTBOX";
+pub const PENDING_EVENT_SCHEMA_VERSION: u32 = 1;
+
+const MAX_PENDING_EVENT_BYTES: u64 = 2 * 1024 * 1024;
 
 static EVENT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -27,6 +31,18 @@ pub enum EventType {
     MutationFailed,
     #[serde(rename = "mutation.completed")]
     MutationCompleted,
+}
+
+impl EventType {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DriftChecked => "drift.checked",
+            Self::MutationPending => "mutation.pending",
+            Self::MutationDenied => "mutation.denied",
+            Self::MutationFailed => "mutation.failed",
+            Self::MutationCompleted => "mutation.completed",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
@@ -45,6 +61,44 @@ pub struct EventEnvelope {
     pub event_type: EventType,
     pub source: EventSource,
     pub payload: Value,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingEvent {
+    pub schema_version: u32,
+    pub queued_at: String,
+    pub last_attempted_at: String,
+    pub attempts: u64,
+    pub event: EventEnvelope,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+pub struct PendingEventSummary {
+    pub id: String,
+    pub event_type: EventType,
+    pub source: EventSource,
+    pub emitted_at: String,
+    pub queued_at: String,
+    pub last_attempted_at: String,
+    pub attempts: u64,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+pub struct ReplayResult {
+    pub id: String,
+    pub status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+pub struct ReplayReport {
+    pub attempted: usize,
+    pub delivered: usize,
+    pub failed: usize,
+    pub remaining: usize,
+    pub results: Vec<ReplayResult>,
 }
 
 impl EventEnvelope {
@@ -76,6 +130,7 @@ impl EventEnvelope {
 pub struct EventDispatcher {
     log: Option<PathBuf>,
     command: Option<PathBuf>,
+    outbox: Option<EventOutbox>,
 }
 
 impl EventDispatcher {
@@ -86,16 +141,33 @@ impl EventDispatcher {
         let command = std::env::var_os(EVENT_COMMAND_ENV)
             .filter(|value| !value.is_empty())
             .map(PathBuf::from);
-        Self::new(log, command)
+        let outbox = if std::env::var_os(EVENT_OUTBOX_ENV).is_some() || command.is_some() {
+            Some(EventOutbox::from_environment()?)
+        } else {
+            None
+        };
+        Self::with_outbox(log, command, outbox)
     }
 
     pub fn new(log: Option<PathBuf>, command: Option<PathBuf>) -> Result<Self> {
+        Self::with_outbox(log, command, None)
+    }
+
+    pub fn with_outbox(
+        log: Option<PathBuf>,
+        command: Option<PathBuf>,
+        outbox: Option<EventOutbox>,
+    ) -> Result<Self> {
         let log = log.map(absolute_path).transpose()?;
         let command = command.map(absolute_path).transpose()?;
         if let Some(command) = &command {
             validate_command(command)?;
         }
-        Ok(Self { log, command })
+        Ok(Self {
+            log,
+            command,
+            outbox,
+        })
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -108,6 +180,10 @@ impl EventDispatcher {
 
     pub fn command(&self) -> Option<&Path> {
         self.command.as_deref()
+    }
+
+    pub fn outbox(&self) -> Option<&EventOutbox> {
+        self.outbox.as_ref()
     }
 
     pub fn emit<T: Serialize>(
@@ -130,7 +206,19 @@ impl EventDispatcher {
         }
         if let Some(command) = &self.command {
             if let Err(error) = run_event_command(command, &event, &encoded) {
-                failures.push(format!("command sink {}: {error:#}", command.display()));
+                let mut failure = format!("command sink {}: {error:#}", command.display());
+                if let Some(outbox) = &self.outbox {
+                    match outbox.enqueue(&event) {
+                        Ok(_) => failure.push_str(&format!(
+                            "; event queued for replay in {}",
+                            outbox.directory().display()
+                        )),
+                        Err(queue_error) => failure.push_str(&format!(
+                            "; failed to queue event for replay: {queue_error:#}"
+                        )),
+                    }
+                }
+                failures.push(failure);
             }
         }
         if failures.is_empty() {
@@ -145,6 +233,14 @@ pub fn configure_process_sinks(
     log_override: Option<&Path>,
     command_override: Option<&Path>,
 ) -> Result<EventDispatcher> {
+    configure_process_sinks_with_outbox(log_override, command_override, None)
+}
+
+pub fn configure_process_sinks_with_outbox(
+    log_override: Option<&Path>,
+    command_override: Option<&Path>,
+    outbox_override: Option<&Path>,
+) -> Result<EventDispatcher> {
     if let Some(path) = log_override {
         let path = absolute_path(path.to_path_buf())?;
         std::env::set_var(EVENT_LOG_ENV, &path);
@@ -154,6 +250,10 @@ pub fn configure_process_sinks(
         validate_command(&path)?;
         std::env::set_var(EVENT_COMMAND_ENV, &path);
     }
+    if let Some(path) = outbox_override {
+        let path = absolute_path(path.to_path_buf())?;
+        std::env::set_var(EVENT_OUTBOX_ENV, &path);
+    }
     let dispatcher = EventDispatcher::from_environment()?;
     if let Some(path) = dispatcher.log() {
         std::env::set_var(EVENT_LOG_ENV, path);
@@ -161,7 +261,274 @@ pub fn configure_process_sinks(
     if let Some(path) = dispatcher.command() {
         std::env::set_var(EVENT_COMMAND_ENV, path);
     }
+    if let Some(outbox) = dispatcher.outbox() {
+        std::env::set_var(EVENT_OUTBOX_ENV, outbox.directory());
+    }
     Ok(dispatcher)
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct EventOutbox {
+    directory: PathBuf,
+}
+
+impl EventOutbox {
+    pub fn from_environment() -> Result<Self> {
+        let directory = if let Some(path) =
+            std::env::var_os(EVENT_OUTBOX_ENV).filter(|value| !value.is_empty())
+        {
+            PathBuf::from(path)
+        } else if let Some(path) =
+            std::env::var_os("DUTIS_STATE_DIR").filter(|value| !value.is_empty())
+        {
+            PathBuf::from(path).join("event-outbox")
+        } else {
+            let home = std::env::var_os("HOME").ok_or_else(|| {
+                anyhow!("HOME is not set; set DUTIS_EVENT_OUTBOX or DUTIS_STATE_DIR explicitly")
+            })?;
+            PathBuf::from(home).join("Library/Application Support/dutis/event-outbox")
+        };
+        Ok(Self::new(absolute_path(directory)?))
+    }
+
+    pub fn new(directory: impl Into<PathBuf>) -> Self {
+        Self {
+            directory: directory.into(),
+        }
+    }
+
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+
+    pub fn enqueue(&self, event: &EventEnvelope) -> Result<PendingEvent> {
+        validate_event(event)?;
+        let now = current_timestamp()?;
+        let path = self.record_path(&event.id)?;
+        let existing = if path.is_file() {
+            Some(self.load_path(&path)?)
+        } else {
+            None
+        };
+        let pending = PendingEvent {
+            schema_version: PENDING_EVENT_SCHEMA_VERSION,
+            queued_at: existing
+                .as_ref()
+                .map_or_else(|| now.clone(), |record| record.queued_at.clone()),
+            last_attempted_at: now,
+            attempts: existing.map_or(1, |record| record.attempts.saturating_add(1)),
+            event: event.clone(),
+        };
+        self.store(&pending)?;
+        Ok(pending)
+    }
+
+    pub fn pending(&self) -> Result<Vec<PendingEventSummary>> {
+        Ok(self
+            .load_all()?
+            .into_iter()
+            .map(|pending| PendingEventSummary {
+                id: pending.event.id,
+                event_type: pending.event.event_type,
+                source: pending.event.source,
+                emitted_at: pending.event.emitted_at,
+                queued_at: pending.queued_at,
+                last_attempted_at: pending.last_attempted_at,
+                attempts: pending.attempts,
+            })
+            .collect())
+    }
+
+    pub fn replay(&self, command: &Path, limit: usize) -> Result<ReplayReport> {
+        validate_command(command)?;
+        if limit == 0 {
+            bail!("replay limit must be at least 1");
+        }
+        let pending = self.load_all()?;
+        let mut results = Vec::new();
+        let mut delivered = 0;
+        let mut failed = 0;
+        for mut record in pending.into_iter().take(limit) {
+            let mut encoded = serde_json::to_vec(&record.event)?;
+            encoded.push(b'\n');
+            match run_event_command(command, &record.event, &encoded) {
+                Ok(()) => {
+                    fs::remove_file(self.record_path(&record.event.id)?).with_context(|| {
+                        format!("failed to remove delivered event {}", record.event.id)
+                    })?;
+                    delivered += 1;
+                    results.push(ReplayResult {
+                        id: record.event.id,
+                        status: "delivered",
+                        error: None,
+                    });
+                }
+                Err(error) => {
+                    record.attempts = record.attempts.saturating_add(1);
+                    record.last_attempted_at = current_timestamp()?;
+                    self.store(&record)?;
+                    failed += 1;
+                    results.push(ReplayResult {
+                        id: record.event.id,
+                        status: "failed",
+                        error: Some(format!("{error:#}")),
+                    });
+                }
+            }
+        }
+        let remaining = self.load_all()?.len();
+        Ok(ReplayReport {
+            attempted: delivered + failed,
+            delivered,
+            failed,
+            remaining,
+            results,
+        })
+    }
+
+    fn load_all(&self) -> Result<Vec<PendingEvent>> {
+        if !self.directory.exists() {
+            return Ok(Vec::new());
+        }
+        let mut paths = Vec::new();
+        for entry in fs::read_dir(&self.directory)
+            .with_context(|| format!("failed to read {}", self.directory.display()))?
+        {
+            let path = entry
+                .with_context(|| format!("failed to read {}", self.directory.display()))?
+                .path();
+            if path
+                .extension()
+                .is_some_and(|extension| extension == "json")
+            {
+                paths.push(path);
+            }
+        }
+        paths.sort();
+        let mut pending = paths
+            .iter()
+            .map(|path| self.load_path(path))
+            .collect::<Result<Vec<_>>>()?;
+        pending.sort_by(|left, right| {
+            (&left.queued_at, &left.event.id).cmp(&(&right.queued_at, &right.event.id))
+        });
+        Ok(pending)
+    }
+
+    fn load_path(&self, path: &Path) -> Result<PendingEvent> {
+        let metadata = fs::symlink_metadata(path)
+            .with_context(|| format!("failed to inspect pending event {}", path.display()))?;
+        if !metadata.file_type().is_file() {
+            bail!("pending event is not a regular file: {}", path.display());
+        }
+        if metadata.len() > MAX_PENDING_EVENT_BYTES {
+            bail!("pending event {} exceeds the size limit", path.display());
+        }
+        let file = fs::File::open(path)
+            .with_context(|| format!("failed to open pending event {}", path.display()))?;
+        let pending: PendingEvent = serde_json::from_reader(BufReader::new(file))
+            .with_context(|| format!("failed to parse pending event {}", path.display()))?;
+        validate_pending_event(&pending)?;
+        let expected = self.record_path(&pending.event.id)?;
+        if expected != path {
+            bail!(
+                "pending event ID does not match its filename: {}",
+                path.display()
+            );
+        }
+        Ok(pending)
+    }
+
+    fn store(&self, pending: &PendingEvent) -> Result<()> {
+        validate_pending_event(pending)?;
+        create_private_directories(&self.directory)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&self.directory, fs::Permissions::from_mode(0o700))?;
+        }
+        let destination = self.record_path(&pending.event.id)?;
+        let sequence = EVENT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let temporary = self.directory.join(format!(
+            ".{}.{}.{}.tmp",
+            pending.event.id,
+            std::process::id(),
+            sequence
+        ));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options
+            .open(&temporary)
+            .with_context(|| format!("failed to create {}", temporary.display()))?;
+        let mut writer = BufWriter::new(file);
+        serde_json::to_writer_pretty(&mut writer, pending)?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+        writer.get_ref().sync_all()?;
+        fs::rename(&temporary, &destination)
+            .with_context(|| format!("failed to atomically store event {}", pending.event.id))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&destination, fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(())
+    }
+
+    fn record_path(&self, id: &str) -> Result<PathBuf> {
+        validate_event_id(id)?;
+        Ok(self.directory.join(format!("{id}.json")))
+    }
+}
+
+fn validate_pending_event(pending: &PendingEvent) -> Result<()> {
+    if pending.schema_version != PENDING_EVENT_SCHEMA_VERSION {
+        bail!(
+            "unsupported pending event schema version {}; expected {}",
+            pending.schema_version,
+            PENDING_EVENT_SCHEMA_VERSION
+        );
+    }
+    if pending.attempts == 0 {
+        bail!("pending event attempt count must be at least 1");
+    }
+    validate_event(&pending.event)
+}
+
+fn validate_event(event: &EventEnvelope) -> Result<()> {
+    if event.schema_version != EVENT_SCHEMA_VERSION {
+        bail!(
+            "unsupported event schema version {}; expected {}",
+            event.schema_version,
+            EVENT_SCHEMA_VERSION
+        );
+    }
+    validate_event_id(&event.id)
+}
+
+fn validate_event_id(id: &str) -> Result<()> {
+    if id.is_empty()
+        || id.len() > 256
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        bail!(
+            "event ID must contain 1 to 256 ASCII letters, numbers, dots, underscores, or hyphens"
+        );
+    }
+    Ok(())
+}
+
+fn current_timestamp() -> Result<String> {
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .context("failed to format event timestamp")
 }
 
 pub fn emit_best_effort<T: Serialize>(event_type: EventType, source: EventSource, payload: &T) {
@@ -252,14 +619,10 @@ fn create_private_directories(path: &Path) -> Result<()> {
 }
 
 fn run_event_command(command: &Path, event: &EventEnvelope, encoded: &[u8]) -> Result<()> {
-    let event_type = serde_json::to_value(event.event_type)?;
-    let event_type = event_type
-        .as_str()
-        .ok_or_else(|| anyhow!("event type did not serialize as a string"))?;
     let mut process = Command::new(command);
     process
         .env("DUTIS_EVENT_ID", &event.id)
-        .env("DUTIS_EVENT_TYPE", event_type)
+        .env("DUTIS_EVENT_TYPE", event.event_type.as_str())
         .env_remove("DUTIS_APPROVAL_TOKEN")
         .env_remove("DUTIS_MCP_APPROVAL_TOKEN")
         .env_remove("DUTIS_WATCH_APPROVAL_TOKEN")
@@ -433,6 +796,108 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("rejected"));
         assert_eq!(fs::read_to_string(log).unwrap().lines().count(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_command_events_are_persisted_and_replayed_until_delivered() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_root("outbox-replay");
+        fs::create_dir_all(&root).unwrap();
+        let failing = root.join("fail.sh");
+        fs::write(&failing, "#!/bin/sh\necho unavailable >&2\nexit 7\n").unwrap();
+        fs::set_permissions(&failing, fs::Permissions::from_mode(0o700)).unwrap();
+        let delivered = root.join("delivered.jsonl");
+        let succeeding = root.join("succeed.sh");
+        fs::write(
+            &succeeding,
+            "#!/bin/sh\n/bin/cat >> \"$DUTIS_TEST_EVENT_OUTPUT\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(&succeeding, fs::Permissions::from_mode(0o700)).unwrap();
+        std::env::set_var("DUTIS_TEST_EVENT_OUTPUT", &delivered);
+
+        let outbox = EventOutbox::new(root.join("outbox"));
+        let dispatcher =
+            EventDispatcher::with_outbox(None, Some(failing.clone()), Some(outbox.clone()))
+                .unwrap();
+        let error = dispatcher
+            .emit(
+                EventType::MutationCompleted,
+                EventSource::Governance,
+                &json!({"audit_id": "audit-1"}),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("queued for replay"));
+        let pending = outbox.pending().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].attempts, 1);
+        assert_eq!(
+            fs::metadata(outbox.directory())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+
+        let report = outbox.replay(&failing, 100).unwrap();
+        assert_eq!(
+            (report.delivered, report.failed, report.remaining),
+            (0, 1, 1)
+        );
+        assert_eq!(outbox.pending().unwrap()[0].attempts, 2);
+
+        let report = outbox.replay(&succeeding, 100).unwrap();
+        assert_eq!(
+            (report.delivered, report.failed, report.remaining),
+            (1, 0, 0)
+        );
+        let event: EventEnvelope =
+            serde_json::from_str(fs::read_to_string(&delivered).unwrap().trim()).unwrap();
+        assert_eq!(event.event_type, EventType::MutationCompleted);
+        assert!(outbox.pending().unwrap().is_empty());
+
+        std::env::remove_var("DUTIS_TEST_EVENT_OUTPUT");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn outbox_rejects_records_whose_filename_does_not_match_the_event_id() {
+        let root = temp_root("outbox-invalid");
+        let outbox = EventOutbox::new(root.join("outbox"));
+        let event = EventEnvelope::new(
+            EventType::DriftChecked,
+            EventSource::Watcher,
+            &json!({"state": "in_sync"}),
+        )
+        .unwrap();
+        let pending = outbox.enqueue(&event).unwrap();
+        let original = outbox.record_path(&pending.event.id).unwrap();
+        fs::rename(&original, outbox.directory().join("different.json")).unwrap();
+        assert!(outbox
+            .pending()
+            .unwrap_err()
+            .to_string()
+            .contains("does not match its filename"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn outbox_rejects_symlinked_records() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root("outbox-symlink");
+        let directory = root.join("outbox");
+        fs::create_dir_all(&directory).unwrap();
+        let external = root.join("external.json");
+        fs::write(&external, b"{}\n").unwrap();
+        symlink(&external, directory.join("linked.json")).unwrap();
+        let error = EventOutbox::new(&directory).pending().unwrap_err();
+        assert!(error.to_string().contains("not a regular file"));
         fs::remove_dir_all(root).unwrap();
     }
 }

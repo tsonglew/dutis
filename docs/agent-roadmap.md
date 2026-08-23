@@ -259,11 +259,32 @@ Acceptance criteria:
 - An explicit backend override supports compatibility diagnostics without
   weakening mutation, policy, audit, or snapshot boundaries.
 
+## Phase 13: Durable event replay
+
+Status: implemented for v2.17.0
+
+Persist failed external event-command deliveries locally and let operators or
+agents retry them without re-running the originating association operation.
+
+Acceptance criteria:
+
+- Command-delivery failures are atomically queued with the original event ID,
+  payload, timestamps, and attempt count in owner-only local storage.
+- CLI commands list pending deliveries and replay a bounded oldest-first batch
+  through the currently configured command sink.
+- Successful deliveries are removed; failed deliveries remain queued and
+  increment their attempt count.
+- Replay retains the original event ID for receiver-side idempotency, validates
+  stored records before delivery, and rejects invalid IDs or non-regular queue
+  entries.
+- Queue failures and replay failures never change mutation, policy, audit,
+  snapshot, or drift outcomes.
+
 ## Near-term engineering sequence
 
-1. Release Phase 12 and validate native role results across supported macOS
-   releases and managed-device configurations.
-2. Add durable replay tooling for failed external event deliveries without
-   coupling observability failures to association mutations.
-3. Add policy-aware application recommendation inputs for teams and managed
+1. Release Phase 13 and validate outbox recovery with representative webhook
+   receivers and long-running LaunchAgents.
+2. Add policy-aware application recommendation inputs for teams and managed
    fleets without introducing a remote control plane.
+3. Add explicit queue retention and operator-approved dead-letter cleanup
+   after production replay behavior is established.

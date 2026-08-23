@@ -248,3 +248,101 @@ fn watcher_event_flows_through_external_adapter_to_transport() {
     assert_eq!(event["payload"]["state"], "drift_detected");
     fs::remove_dir_all(root).unwrap();
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn failed_http_delivery_is_durably_queued_and_replayed() {
+    let root = temp_root("outbox-replay");
+    let bin = root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let fake_duti = bin.join("duti");
+    write_executable(
+        &fake_duti,
+        concat!(
+            "#!/bin/sh\n",
+            "if [ \"$1\" = \"-V\" ]; then printf 'test-duti\\n'; exit 0; fi\n",
+            "if [ \"$1\" = \"-x\" ]; then printf 'Other\\n/Applications/Other.app\\ncom.example.Other\\n'; exit 0; fi\n",
+            "exit 99\n",
+        ),
+    );
+    let fake_curl = root.join("curl");
+    write_executable(
+        &fake_curl,
+        concat!(
+            "#!/bin/sh\n",
+            "if [ -e \"$DUTIS_FAIL_MARKER\" ]; then exit 22; fi\n",
+            "body_path=$(/usr/bin/sed -n 's/^data-binary = \"@\\(.*\\)\"$/\\1/p' \"$3\")\n",
+            "/bin/cp \"$body_path\" \"$DUTIS_CAPTURE_BODY\"\n",
+        ),
+    );
+    let config = root.join("dutis.toml");
+    fs::write(
+        &config,
+        "version = 1\n[associations]\nmd = 'com.apple.TextEdit'\n",
+    )
+    .unwrap();
+    let state = root.join("state");
+    let fail_marker = root.join("fail");
+    fs::write(&fail_marker, b"").unwrap();
+    let captured_body = root.join("body");
+
+    let watch = dutis()
+        .env("PATH", &bin)
+        .env("DUTIS_STATE_DIR", &state)
+        .env("DUTIS_HTTP_ENDPOINT", ENDPOINT)
+        .env("DUTIS_HTTP_BEARER_TOKEN", TOKEN)
+        .env("DUTIS_HTTP_CURL", &fake_curl)
+        .env("DUTIS_FAIL_MARKER", &fail_marker)
+        .env("DUTIS_CAPTURE_BODY", &captured_body)
+        .args([
+            "--event-command",
+            env!("CARGO_BIN_EXE_dutis-event-http"),
+            "watch",
+            config.to_str().unwrap(),
+            "--once",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(watch.status.success());
+    assert!(String::from_utf8_lossy(&watch.stderr).contains("queued for replay"));
+
+    let pending = dutis()
+        .env("DUTIS_STATE_DIR", &state)
+        .args(["events", "pending", "--json"])
+        .output()
+        .unwrap();
+    assert!(pending.status.success());
+    let response: Value = serde_json::from_slice(&pending.stdout).unwrap();
+    assert_eq!(response["data"].as_array().unwrap().len(), 1);
+    let event_id = response["data"][0]["id"].as_str().unwrap().to_owned();
+
+    fs::remove_file(&fail_marker).unwrap();
+    let replay = dutis()
+        .env("DUTIS_STATE_DIR", &state)
+        .env("DUTIS_HTTP_ENDPOINT", ENDPOINT)
+        .env("DUTIS_HTTP_BEARER_TOKEN", TOKEN)
+        .env("DUTIS_HTTP_CURL", &fake_curl)
+        .env("DUTIS_FAIL_MARKER", &fail_marker)
+        .env("DUTIS_CAPTURE_BODY", &captured_body)
+        .args([
+            "--event-command",
+            env!("CARGO_BIN_EXE_dutis-event-http"),
+            "events",
+            "replay",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        replay.status.success(),
+        "{}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
+    let response: Value = serde_json::from_slice(&replay.stdout).unwrap();
+    assert_eq!(response["data"]["delivered"], 1);
+    assert_eq!(response["data"]["remaining"], 0);
+    let delivered: Value = serde_json::from_slice(&fs::read(&captured_body).unwrap()).unwrap();
+    assert_eq!(delivered["id"], event_id);
+    fs::remove_dir_all(root).unwrap();
+}
