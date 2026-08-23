@@ -32,7 +32,7 @@ The server advertises these read tools:
   definitions.
 - `dutis_profiles`: list built-in profiles and ordered candidates.
 - `dutis_profile`: inspect one profile by its `profile` name.
-- `dutis_recommend`: generate an explainable proposal, plan digest, and policy assessment by `profile` name.
+- `dutis_recommend`: generate an explainable policy-aware proposal, plan digest, and policy assessment by `profile` name.
 - `dutis_drift`: check inline TOML for drift and return a timestamped report with policy assessment.
 - `dutis_query`: find installed handlers for one extension.
 - `dutis_get`: inspect the current default handler.
@@ -62,6 +62,9 @@ extension and MIME queries. See
 
 Profile recommendations are also read-only. A recommendation is evidence, not
 approval: it does not register a mutation tool call or change an association.
+Candidate ordering uses the server's effective local policy, including
+recommendation preferences, allowlists, and protected associations. Callers
+cannot supply or replace fleet policy through the tool request.
 To use one, review its `proposed_toml`, rebuild it with `dutis_diff`, run
 `dutis_policy_check`, and follow the normal write approval flow.
 

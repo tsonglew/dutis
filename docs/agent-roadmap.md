@@ -280,11 +280,32 @@ Acceptance criteria:
 - Queue failures and replay failures never change mutation, policy, audit,
   snapshot, or drift outcomes.
 
+## Phase 14: Policy-aware fleet recommendations
+
+Status: implemented for v2.18.0
+
+Use locally deployed team preferences and existing mutation constraints while
+ranking profile candidates, without adding a remote policy service.
+
+Acceptance criteria:
+
+- The version-one policy schema accepts ordered global and per-extension
+  recommendation preferences while remaining backward compatible.
+- Recommendation ranking honors protected targets, application/extension/kind
+  allowlists, extension preferences, and global preferences before profile
+  defaults.
+- Candidate evidence reports its source, policy eligibility, and concrete
+  exclusion reasons; blocked associations never enter proposed configuration.
+- CLI and MCP use the same effective local policy and return a plan that can be
+  independently rechecked by the existing governed workflow.
+- MCP callers cannot inject or replace policy, and no network control plane or
+  new mutation path is introduced.
+
 ## Near-term engineering sequence
 
-1. Release Phase 13 and validate outbox recovery with representative webhook
-   receivers and long-running LaunchAgents.
-2. Add policy-aware application recommendation inputs for teams and managed
-   fleets without introducing a remote control plane.
-3. Add explicit queue retention and operator-approved dead-letter cleanup
+1. Release Phase 14 and validate managed policy deployment across representative
+   developer and design fleets.
+2. Add explicit queue retention and operator-approved dead-letter cleanup
    after production replay behavior is established.
+3. Extend recommendation preferences to typed UTI, MIME, and URL-scheme
+   associations after gathering fleet usage evidence.

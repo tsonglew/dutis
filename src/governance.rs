@@ -39,8 +39,15 @@ pub struct Policy {
     pub allowed_applications: Option<BTreeSet<String>>,
     pub protected_associations: BTreeMap<String, String>,
     pub protected_handlers: Vec<ProtectedHandler>,
+    pub recommendations: RecommendationPreferences,
     #[serde(skip_serializing)]
     approval_token_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Eq, PartialEq, Serialize)]
+pub struct RecommendationPreferences {
+    pub preferred_applications: Vec<String>,
+    pub extensions: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -56,7 +63,18 @@ struct RawPolicy {
     protected_associations: BTreeMap<String, String>,
     #[serde(default)]
     protected_handlers: Vec<ProtectedHandler>,
+    #[serde(default)]
+    recommendations: RawRecommendationPreferences,
     approval_token_sha256: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRecommendationPreferences {
+    #[serde(default)]
+    preferred_applications: Vec<String>,
+    #[serde(default)]
+    extensions: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -79,6 +97,7 @@ impl Default for Policy {
             allowed_applications: None,
             protected_associations: BTreeMap::new(),
             protected_handlers: Vec::new(),
+            recommendations: RecommendationPreferences::default(),
             approval_token_sha256: None,
         }
     }
@@ -102,6 +121,7 @@ impl Policy {
             .allowed_applications
             .map(|values| normalize_nonempty_set(values, "allowed application"))
             .transpose()?;
+        let recommendations = normalize_recommendation_preferences(raw.recommendations)?;
         let allowed_kinds = raw.allowed_kinds.map(|values| values.into_iter().collect());
         let mut protected_associations = BTreeMap::new();
         for (input_extension, input_bundle_id) in raw.protected_associations {
@@ -167,6 +187,7 @@ impl Policy {
             allowed_applications,
             protected_associations,
             protected_handlers,
+            recommendations,
             approval_token_sha256: raw
                 .approval_token_sha256
                 .map(|digest| digest.to_ascii_lowercase()),
@@ -341,6 +362,7 @@ impl LoadedPolicy {
             allowed_applications: self.policy.allowed_applications.clone(),
             protected_associations: self.policy.protected_associations.clone(),
             protected_handlers: self.policy.protected_handlers.clone(),
+            recommendations: self.policy.recommendations.clone(),
         }
     }
 }
@@ -358,6 +380,7 @@ pub struct PolicySummary {
     pub allowed_applications: Option<BTreeSet<String>>,
     pub protected_associations: BTreeMap<String, String>,
     pub protected_handlers: Vec<ProtectedHandler>,
+    pub recommendations: RecommendationPreferences,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
@@ -783,6 +806,46 @@ fn normalize_nonempty_set(values: Vec<String>, label: &str) -> Result<BTreeSet<S
     Ok(normalized)
 }
 
+fn normalize_recommendation_preferences(
+    raw: RawRecommendationPreferences,
+) -> Result<RecommendationPreferences> {
+    let preferred_applications = normalize_nonempty_ordered(
+        raw.preferred_applications,
+        "preferred recommendation application",
+    )?;
+    let mut extensions = BTreeMap::new();
+    for (input_extension, applications) in raw.extensions {
+        let extension = normalize_extension(&input_extension)?;
+        let applications = normalize_nonempty_ordered(
+            applications,
+            &format!("recommendation application for .{extension}"),
+        )?;
+        if extensions.insert(extension.clone(), applications).is_some() {
+            bail!("duplicate recommendation extension .{extension}");
+        }
+    }
+    Ok(RecommendationPreferences {
+        preferred_applications,
+        extensions,
+    })
+}
+
+fn normalize_nonempty_ordered(values: Vec<String>, label: &str) -> Result<Vec<String>> {
+    let mut seen = BTreeSet::new();
+    let mut normalized = Vec::with_capacity(values.len());
+    for value in values {
+        let value = value.trim();
+        if value.is_empty() {
+            bail!("{label} cannot be empty");
+        }
+        if !seen.insert(value.to_owned()) {
+            bail!("duplicate {label} '{value}'");
+        }
+        normalized.push(value.to_owned());
+    }
+    Ok(normalized)
+}
+
 fn validate_record_id(id: &str) -> Result<()> {
     if id.is_empty()
         || !id
@@ -882,11 +945,41 @@ mod tests {
 
                 [protected_associations]
                 ".PDF" = "com.apple.Preview"
+
+                [recommendations]
+                preferred_applications = [" com.example.Editor "]
+
+                [recommendations.extensions]
+                ".MD" = ["com.example.TeamEditor", "com.example.Editor"]
             "#,
         )
         .unwrap();
         assert!(policy.allowed_extensions.unwrap().contains("md"));
         assert_eq!(policy.protected_associations["pdf"], "com.apple.Preview");
+        assert_eq!(
+            policy.recommendations.preferred_applications,
+            ["com.example.Editor"]
+        );
+        assert_eq!(
+            policy.recommendations.extensions["md"],
+            ["com.example.TeamEditor", "com.example.Editor"]
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_or_empty_recommendation_preferences() {
+        assert!(Policy::parse(
+            "version = 1\n[recommendations]\npreferred_applications = ['com.example.App', 'com.example.App']\n"
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("duplicate preferred recommendation application"));
+        assert!(
+            Policy::parse("version = 1\n[recommendations.extensions]\nmd = ['   ']\n")
+                .unwrap_err()
+                .to_string()
+                .contains("cannot be empty")
+        );
     }
 
     #[test]

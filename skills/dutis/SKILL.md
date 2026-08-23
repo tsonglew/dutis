@@ -25,6 +25,9 @@ Use Dutis for macOS Launch Services associations. Preserve its
    inspect `dutis_profiles` / `dutis_profile`, then use `dutis_recommend` (or
    the equivalent CLI commands). Present candidate evidence and treat the
    recommendation strictly as a proposal, never as approval.
+   Treat candidate `policy_eligible`, `policy_reasons`, and `source` fields as
+   required evidence; do not substitute caller-provided preferences for the
+   effective local policy.
 3. Express multi-target changes as version 2 TOML. Build a fresh plan and
    run the policy check. Treat unresolved selectors or policy violations as a
    stop condition.

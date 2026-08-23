@@ -30,7 +30,9 @@ use dutis::planner::{
     assemble_plan, build_plan, AssociationPlan, PlanAction, PlanEntry, PlanSummary,
     PlannedApplication,
 };
-use dutis::profiles::{find_profile, profiles, recommend_profile, ProfileRecommendation};
+use dutis::profiles::{
+    find_profile, profiles, recommend_profile_with_policy, ProfileRecommendation,
+};
 use dutis::snapshot::{
     build_rollback_plan, capture_targets, SnapshotReason, SnapshotStore, SnapshotSummary,
 };
@@ -995,12 +997,15 @@ fn run_recommend(args: RecommendArgs) -> Result<(), CliError> {
     let catalog = scan_catalog()?;
     report_metadata_failures(catalog.metadata_failures);
     system::duti_version().map_err(|error| CliError::dependency(format!("{error:#}")))?;
-    let recommendation =
-        recommend_profile(&profile, &catalog.applications, system::query_default_app).map_err(
-            |error| CliError::operation(format!("failed to build recommendation: {error:#}")),
-        )?;
     let policy = LoadedPolicy::from_environment()
         .map_err(|error| CliError::usage(format!("failed to load policy: {error:#}")))?;
+    let recommendation = recommend_profile_with_policy(
+        &profile,
+        &catalog.applications,
+        system::query_default_app,
+        &policy.policy,
+    )
+    .map_err(|error| CliError::operation(format!("failed to build recommendation: {error:#}")))?;
     let result = RecommendResult {
         metadata_failures: catalog.metadata_failures,
         assessment: policy.policy.assess(&recommendation.plan),
@@ -1034,11 +1039,18 @@ fn run_recommend(args: RecommendArgs) -> Result<(), CliError> {
                     .map(|path| path.display().to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
+                let policy_status = if candidate.policy_eligible {
+                    "eligible".to_owned()
+                } else {
+                    format!("blocked: {}", candidate.policy_reasons.join(", "))
+                };
                 println!(
-                    "  {}. {} [{}; installed={}; declares_extension={}]{}",
+                    "  {}. {} [{}; source={}; policy={}; installed={}; declares_extension={}]{}",
                     candidate.priority,
                     candidate.bundle_id,
                     status,
+                    candidate.source.as_str(),
+                    policy_status,
                     candidate.installed_paths.len(),
                     candidate.declares_extension,
                     if paths.is_empty() {
