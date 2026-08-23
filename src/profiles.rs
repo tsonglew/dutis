@@ -1,6 +1,7 @@
 use crate::application::Application;
+use crate::association::AssociationTarget;
 use crate::association::{AssociationKind, HandlerRole};
-use crate::config::{DutisConfig, CONFIG_VERSION};
+use crate::config::{AssociationRule, DutisConfig, CONFIG_VERSION};
 use crate::governance::Policy;
 use crate::planner::{assemble_plan, AssociationPlan, PlanAction, PlanEntry, PlannedApplication};
 use crate::system::DefaultApplication;
@@ -42,6 +43,7 @@ pub enum RecommendationAction {
 pub enum CandidateSource {
     ProtectedPolicy,
     ExtensionPreference,
+    HandlerPreference,
     GlobalPreference,
     Profile,
 }
@@ -51,6 +53,7 @@ impl CandidateSource {
         match self {
             Self::ProtectedPolicy => "protected_policy",
             Self::ExtensionPreference => "extension_preference",
+            Self::HandlerPreference => "handler_preference",
             Self::GlobalPreference => "global_preference",
             Self::Profile => "profile",
         }
@@ -64,6 +67,7 @@ pub struct CandidateEvidence {
     pub source: CandidateSource,
     pub installed_paths: Vec<PathBuf>,
     pub declares_extension: bool,
+    pub declares_target: bool,
     pub policy_eligible: bool,
     pub policy_reasons: Vec<String>,
     pub selected: bool,
@@ -72,6 +76,7 @@ pub struct CandidateEvidence {
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct AssociationRecommendation {
+    pub association: AssociationTarget,
     pub extension: String,
     pub action: RecommendationAction,
     pub current: Option<DefaultApplication>,
@@ -124,7 +129,13 @@ pub fn recommend_profile<F>(
 where
     F: FnMut(&str) -> Result<Option<DefaultApplication>>,
 {
-    recommend_profile_internal(profile, applications, &mut query_default, None)
+    recommend_profile_internal(
+        profile,
+        applications,
+        &mut |target| query_default(&target.identifier),
+        None,
+        false,
+    )
 }
 
 pub fn recommend_profile_with_policy<F>(
@@ -136,7 +147,31 @@ pub fn recommend_profile_with_policy<F>(
 where
     F: FnMut(&str) -> Result<Option<DefaultApplication>>,
 {
-    recommend_profile_internal(profile, applications, &mut query_default, Some(policy))
+    recommend_profile_internal(
+        profile,
+        applications,
+        &mut |target| query_default(&target.identifier),
+        Some(policy),
+        false,
+    )
+}
+
+pub fn recommend_profile_with_policy_typed<F>(
+    profile: &ProfileDefinition,
+    applications: &[Application],
+    mut query_default: F,
+    policy: &Policy,
+) -> Result<ProfileRecommendation>
+where
+    F: FnMut(&AssociationTarget) -> Result<Option<DefaultApplication>>,
+{
+    recommend_profile_internal(
+        profile,
+        applications,
+        &mut query_default,
+        Some(policy),
+        true,
+    )
 }
 
 fn recommend_profile_internal<F>(
@@ -144,19 +179,55 @@ fn recommend_profile_internal<F>(
     applications: &[Application],
     query_default: &mut F,
     policy: Option<&Policy>,
+    include_typed_preferences: bool,
 ) -> Result<ProfileRecommendation>
 where
-    F: FnMut(&str) -> Result<Option<DefaultApplication>>,
+    F: FnMut(&AssociationTarget) -> Result<Option<DefaultApplication>>,
 {
     let mut proposed_associations = BTreeMap::new();
+    let mut proposed_handlers = Vec::new();
     let mut plan_entries = Vec::new();
-    let mut recommendations = Vec::with_capacity(profile.associations.len());
+    let mut inputs = profile
+        .associations
+        .iter()
+        .map(|association| {
+            Ok(RecommendationInput {
+                target: AssociationTarget::extension(association.extension)?,
+                profile_candidates: association
+                    .candidates
+                    .iter()
+                    .map(|candidate| OwnedProfileCandidate {
+                        bundle_id: candidate.bundle_id.to_owned(),
+                        rationale: candidate.rationale.to_owned(),
+                    })
+                    .collect(),
+                requires_declaration: false,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if include_typed_preferences {
+        if let Some(policy) = policy {
+            for preference in &policy.recommendations.handlers {
+                let target = AssociationTarget::new(
+                    preference.kind,
+                    &preference.identifier,
+                    preference.role,
+                )?;
+                inputs.push(RecommendationInput {
+                    target,
+                    profile_candidates: Vec::new(),
+                    requires_declaration: true,
+                });
+            }
+        }
+    }
+    let mut recommendations = Vec::with_capacity(inputs.len());
 
-    for association in &profile.associations {
-        let current = query_default(association.extension)?;
-        let required =
-            policy.and_then(|policy| required_application(policy, association.extension));
-        let candidates = ordered_candidates(association, policy, required);
+    for input in inputs {
+        let association = &input.target;
+        let current = query_default(association)?;
+        let required = policy.and_then(|policy| required_application(policy, association));
+        let candidates = ordered_candidates(&input, policy, required);
         let candidates = candidates
             .into_iter()
             .enumerate()
@@ -168,13 +239,11 @@ where
                     })
                     .collect::<Vec<_>>();
                 let policy_reasons = policy.map_or_else(Vec::new, |policy| {
-                    policy_reasons(
-                        policy,
-                        association.extension,
-                        &candidate.bundle_id,
-                        required,
-                    )
+                    policy_reasons(policy, association, &candidate.bundle_id, required)
                 });
+                let declares_target = matches
+                    .iter()
+                    .any(|application| application_declares_target(application, association));
                 CandidateEvidence {
                     bundle_id: candidate.bundle_id,
                     priority: index + 1,
@@ -183,12 +252,9 @@ where
                         .iter()
                         .map(|application| application.path.clone())
                         .collect(),
-                    declares_extension: matches.iter().any(|application| {
-                        application
-                            .extensions
-                            .iter()
-                            .any(|extension| extension.eq_ignore_ascii_case(association.extension))
-                    }),
+                    declares_extension: association.kind == AssociationKind::Extension
+                        && declares_target,
+                    declares_target,
                     policy_eligible: policy_reasons.is_empty(),
                     policy_reasons,
                     selected: false,
@@ -208,16 +274,20 @@ where
                 candidate.source != CandidateSource::Profile
                     && candidate.policy_eligible
                     && candidate.installed_paths.len() == 1
+                    && (!input.requires_declaration || candidate.declares_target)
             })
             .or_else(|| {
                 current_candidate.filter(|index| {
                     candidates[*index].policy_eligible
                         && candidates[*index].installed_paths.len() == 1
+                        && (!input.requires_declaration || candidates[*index].declares_target)
                 })
             })
             .or_else(|| {
                 candidates.iter().position(|candidate| {
-                    candidate.policy_eligible && candidate.installed_paths.len() == 1
+                    candidate.policy_eligible
+                        && candidate.installed_paths.len() == 1
+                        && (!input.requires_declaration || candidate.declares_target)
                 })
             });
         let mut evidence = candidates;
@@ -256,27 +326,40 @@ where
             } else {
                 match selected.source {
                     CandidateSource::ProtectedPolicy => format!(
-                        "Recommend {} because local policy requires .{} to use {}.",
-                        application.name, association.extension, selected.bundle_id
+                        "Recommend {} because local policy requires {} to use {}.",
+                        application.name, association, selected.bundle_id
                     ),
-                    CandidateSource::ExtensionPreference | CandidateSource::GlobalPreference => {
+                    CandidateSource::ExtensionPreference
+                    | CandidateSource::HandlerPreference
+                    | CandidateSource::GlobalPreference => {
                         format!(
-                            "Recommend {} because it is the highest-priority uniquely installed local-policy preference for .{}.",
-                            application.name, association.extension
+                            "Recommend {} because it is the highest-priority uniquely installed local-policy preference for {}.",
+                            application.name, association
                         )
                     }
                     CandidateSource::Profile => format!(
-                        "Recommend {} because it is the highest-priority uniquely installed candidate for .{}: {}",
-                        application.name, association.extension, selected.rationale
+                        "Recommend {} because it is the highest-priority uniquely installed candidate for {}: {}",
+                        application.name, association, selected.rationale
                     ),
                 }
             };
-            proposed_associations
-                .insert(association.extension.to_owned(), selected.bundle_id.clone());
+            if association.kind == AssociationKind::Extension
+                && association.role == HandlerRole::All
+            {
+                proposed_associations
+                    .insert(association.identifier.clone(), selected.bundle_id.clone());
+            } else {
+                proposed_handlers.push(AssociationRule {
+                    kind: association.kind,
+                    identifier: association.identifier.clone(),
+                    role: association.role,
+                    application: selected.bundle_id.clone(),
+                });
+            }
             plan_entries.push(PlanEntry {
-                kind: AssociationKind::Extension,
-                role: HandlerRole::All,
-                extension: association.extension.to_owned(),
+                kind: association.kind,
+                role: association.role,
+                extension: association.identifier.clone(),
                 selector: selected.bundle_id.clone(),
                 current: current.clone(),
                 target: Some(target.clone()),
@@ -299,20 +382,26 @@ where
             };
             let explanation = if blocked {
                 format!(
-                    "Installed candidates for .{} are excluded by local policy; no change is proposed.",
-                    association.extension
+                    "Installed candidates for {} are excluded by local policy; no change is proposed.",
+                    association
+                )
+            } else if input.requires_declaration {
+                format!(
+                    "No uniquely installed policy-eligible candidate with a matching declaration is available for {}; no change is proposed.",
+                    association
                 )
             } else {
                 format!(
-                    "No uniquely installed policy-eligible candidate is available for .{}; no change is proposed.",
-                    association.extension
+                    "No uniquely installed policy-eligible candidate is available for {}; no change is proposed.",
+                    association
                 )
             };
             (action, None, explanation)
         };
 
         recommendations.push(AssociationRecommendation {
-            extension: association.extension.to_owned(),
+            association: association.clone(),
+            extension: association.identifier.clone(),
             action,
             current,
             target,
@@ -324,7 +413,7 @@ where
     let proposed_config = DutisConfig {
         version: CONFIG_VERSION,
         associations: proposed_associations,
-        handlers: Vec::new(),
+        handlers: proposed_handlers,
     };
     let proposed_toml = toml::to_string_pretty(&proposed_config)?;
     let plan = assemble_plan(CONFIG_VERSION, plan_entries)?;
@@ -370,11 +459,25 @@ struct OrderedCandidate {
     rationale: String,
 }
 
+#[derive(Debug)]
+struct OwnedProfileCandidate {
+    bundle_id: String,
+    rationale: String,
+}
+
+#[derive(Debug)]
+struct RecommendationInput {
+    target: AssociationTarget,
+    profile_candidates: Vec<OwnedProfileCandidate>,
+    requires_declaration: bool,
+}
+
 fn ordered_candidates(
-    association: &ProfileAssociation,
+    input: &RecommendationInput,
     policy: Option<&Policy>,
     required: Option<&str>,
 ) -> Vec<OrderedCandidate> {
+    let association = &input.target;
     let mut candidates = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     let mut push = |bundle_id: &str, source: CandidateSource, rationale: String| {
@@ -394,20 +497,38 @@ fn ordered_candidates(
         );
     }
     if let Some(policy) = policy {
-        if let Some(preferences) = policy.recommendations.extensions.get(association.extension) {
-            for bundle_id in preferences {
+        if association.kind == AssociationKind::Extension {
+            if let Some(preferences) = policy
+                .recommendations
+                .extensions
+                .get(&association.identifier)
+            {
+                for bundle_id in preferences {
+                    push(
+                        bundle_id,
+                        CandidateSource::ExtensionPreference,
+                        format!("Preferred by local policy for {association}."),
+                    );
+                }
+            }
+        } else if let Some(preference) = policy.recommendations.handlers.iter().find(|preference| {
+            preference.kind == association.kind
+                && preference.identifier == association.identifier
+                && preference.role == association.role
+        }) {
+            for bundle_id in &preference.applications {
                 push(
                     bundle_id,
-                    CandidateSource::ExtensionPreference,
-                    format!("Preferred by local policy for .{}.", association.extension),
+                    CandidateSource::HandlerPreference,
+                    format!("Preferred by local policy for {association}."),
                 );
             }
         }
         for bundle_id in &policy.recommendations.preferred_applications {
-            if association
-                .candidates
+            if input
+                .profile_candidates
                 .iter()
-                .any(|candidate| candidate.bundle_id == bundle_id)
+                .any(|candidate| &candidate.bundle_id == bundle_id)
             {
                 push(
                     bundle_id,
@@ -417,29 +538,32 @@ fn ordered_candidates(
             }
         }
     }
-    for candidate in &association.candidates {
+    for candidate in &input.profile_candidates {
         push(
-            candidate.bundle_id,
+            &candidate.bundle_id,
             CandidateSource::Profile,
-            candidate.rationale.to_owned(),
+            candidate.rationale.clone(),
         );
     }
     candidates
 }
 
-fn required_application<'a>(policy: &'a Policy, extension: &str) -> Option<&'a str> {
-    policy
-        .protected_associations
-        .get(extension)
+fn required_application<'a>(
+    policy: &'a Policy,
+    association: &AssociationTarget,
+) -> Option<&'a str> {
+    (association.kind == AssociationKind::Extension && association.role == HandlerRole::All)
+        .then(|| policy.protected_associations.get(&association.identifier))
+        .flatten()
         .map(String::as_str)
         .or_else(|| {
             policy
                 .protected_handlers
                 .iter()
                 .find(|handler| {
-                    handler.kind == AssociationKind::Extension
-                        && handler.identifier == extension
-                        && handler.role == HandlerRole::All
+                    handler.kind == association.kind
+                        && handler.identifier == association.identifier
+                        && handler.role == association.role
                 })
                 .map(|handler| handler.application.as_str())
         })
@@ -447,7 +571,7 @@ fn required_application<'a>(policy: &'a Policy, extension: &str) -> Option<&'a s
 
 fn policy_reasons(
     policy: &Policy,
-    extension: &str,
+    association: &AssociationTarget,
     bundle_id: &str,
     required: Option<&str>,
 ) -> Vec<String> {
@@ -455,16 +579,20 @@ fn policy_reasons(
     if policy
         .allowed_kinds
         .as_ref()
-        .is_some_and(|kinds| !kinds.contains(&AssociationKind::Extension))
+        .is_some_and(|kinds| !kinds.contains(&association.kind))
     {
-        reasons.push("extension associations are not allowed".to_owned());
+        reasons.push(format!("{} associations are not allowed", association.kind));
     }
-    if policy
-        .allowed_extensions
-        .as_ref()
-        .is_some_and(|extensions| !extensions.contains(extension))
+    if association.kind == AssociationKind::Extension
+        && policy
+            .allowed_extensions
+            .as_ref()
+            .is_some_and(|extensions| !extensions.contains(&association.identifier))
     {
-        reasons.push(format!("extension .{extension} is not allowed"));
+        reasons.push(format!(
+            "extension .{} is not allowed",
+            association.identifier
+        ));
     }
     if policy
         .allowed_applications
@@ -476,11 +604,30 @@ fn policy_reasons(
     if let Some(required) = required {
         if required != bundle_id {
             reasons.push(format!(
-                "protected association .{extension} requires {required}"
+                "protected association {association} requires {required}"
             ));
         }
     }
     reasons
+}
+
+fn application_declares_target(application: &Application, association: &AssociationTarget) -> bool {
+    if association.kind == AssociationKind::Extension
+        && application
+            .extensions
+            .iter()
+            .any(|extension| extension.eq_ignore_ascii_case(&association.identifier))
+    {
+        return true;
+    }
+    application.handlers.iter().any(|handler| {
+        handler.kind == association.kind
+            && handler.identifier == association.identifier
+            && (handler.role == HandlerRole::All
+                || association.role == HandlerRole::All
+                || handler.role == association.role
+                || (association.role == HandlerRole::Viewer && handler.role == HandlerRole::Editor))
+    })
 }
 
 fn developer_profile() -> ProfileDefinition {
@@ -967,5 +1114,156 @@ mod tests {
         assert_eq!(recommendation.summary.policy_blocked, 1);
         assert_eq!(recommendation.summary.unavailable, 0);
         assert_eq!(recommendation.plan.summary.total, 0);
+    }
+
+    #[test]
+    fn typed_policy_preference_builds_a_declared_handler_proposal() {
+        let profile = ProfileDefinition {
+            name: "test",
+            description: "test profile",
+            associations: Vec::new(),
+        };
+        let mut browser = app("Browser", "com.example.Browser", &[]);
+        browser.handlers.push(crate::plist_parser::DeclaredHandler {
+            kind: AssociationKind::Uti,
+            identifier: "public.html".to_owned(),
+            role: HandlerRole::Editor,
+            source: crate::plist_parser::HandlerDeclarationSource::DocumentType,
+        });
+        let policy = Policy::parse(
+            r#"
+                version = 1
+                allowed_kinds = ["uti"]
+
+                [[recommendations.handlers]]
+                kind = "uti"
+                identifier = "Public.HTML"
+                role = "viewer"
+                applications = ["com.example.Browser"]
+            "#,
+        )
+        .unwrap();
+        let recommendation = recommend_profile_with_policy_typed(
+            &profile,
+            &[browser],
+            |association| {
+                assert_eq!(association.kind, AssociationKind::Uti);
+                assert_eq!(association.identifier, "public.html");
+                assert_eq!(association.role, HandlerRole::Viewer);
+                Ok(None)
+            },
+            &policy,
+        )
+        .unwrap();
+
+        let result = &recommendation.recommendations[0];
+        assert_eq!(result.association.kind, AssociationKind::Uti);
+        assert_eq!(result.association.role, HandlerRole::Viewer);
+        assert_eq!(result.extension, "public.html");
+        assert_eq!(result.action, RecommendationAction::Change);
+        assert_eq!(
+            result.evidence[0].source,
+            CandidateSource::HandlerPreference
+        );
+        assert!(result.evidence[0].declares_target);
+        assert!(result.evidence[0].selected);
+        assert_eq!(recommendation.proposed_config.handlers.len(), 1);
+        assert_eq!(recommendation.plan.entries[0].kind, AssociationKind::Uti);
+        assert_eq!(recommendation.plan.entries[0].role, HandlerRole::Viewer);
+        assert!(policy.assess(&recommendation.plan).allowed);
+    }
+
+    #[test]
+    fn typed_policy_preference_requires_matching_application_metadata() {
+        let profile = ProfileDefinition {
+            name: "test",
+            description: "test profile",
+            associations: Vec::new(),
+        };
+        let policy = Policy::parse(
+            r#"
+                version = 1
+                [[recommendations.handlers]]
+                kind = "url_scheme"
+                identifier = "HTTPS://"
+                applications = ["com.example.Browser"]
+            "#,
+        )
+        .unwrap();
+        let recommendation = recommend_profile_with_policy_typed(
+            &profile,
+            &[app("Browser", "com.example.Browser", &[])],
+            |_| Ok(None),
+            &policy,
+        )
+        .unwrap();
+
+        let result = &recommendation.recommendations[0];
+        assert_eq!(result.action, RecommendationAction::Unavailable);
+        assert!(!result.evidence[0].declares_target);
+        assert!(!result.evidence[0].selected);
+        assert!(recommendation.proposed_config.handlers.is_empty());
+        assert_eq!(recommendation.plan.summary.total, 0);
+    }
+
+    #[test]
+    fn typed_preferences_cover_mime_and_url_scheme_targets() {
+        let profile = ProfileDefinition {
+            name: "test",
+            description: "test profile",
+            associations: Vec::new(),
+        };
+        let mut application = app("Universal", "com.example.Universal", &[]);
+        application.handlers.extend([
+            crate::plist_parser::DeclaredHandler {
+                kind: AssociationKind::Mime,
+                identifier: "text/plain".to_owned(),
+                role: HandlerRole::Editor,
+                source: crate::plist_parser::HandlerDeclarationSource::DocumentType,
+            },
+            crate::plist_parser::DeclaredHandler {
+                kind: AssociationKind::UrlScheme,
+                identifier: "example".to_owned(),
+                role: HandlerRole::All,
+                source: crate::plist_parser::HandlerDeclarationSource::UrlType,
+            },
+        ]);
+        let policy = Policy::parse(
+            r#"
+                version = 1
+                [[recommendations.handlers]]
+                kind = "mime"
+                identifier = "Text/Plain"
+                role = "editor"
+                applications = ["com.example.Universal"]
+
+                [[recommendations.handlers]]
+                kind = "url_scheme"
+                identifier = "EXAMPLE://"
+                applications = ["com.example.Universal"]
+            "#,
+        )
+        .unwrap();
+        let recommendation =
+            recommend_profile_with_policy_typed(&profile, &[application], |_| Ok(None), &policy)
+                .unwrap();
+
+        assert_eq!(recommendation.summary.changes, 2);
+        assert_eq!(recommendation.proposed_config.handlers.len(), 2);
+        assert_eq!(
+            recommendation
+                .recommendations
+                .iter()
+                .map(|item| (&item.association.kind, item.association.identifier.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (&AssociationKind::Mime, "text/plain"),
+                (&AssociationKind::UrlScheme, "example")
+            ]
+        );
+        assert!(recommendation
+            .recommendations
+            .iter()
+            .all(|item| item.evidence[0].declares_target && item.evidence[0].selected));
     }
 }

@@ -48,6 +48,17 @@ pub struct Policy {
 pub struct RecommendationPreferences {
     pub preferred_applications: Vec<String>,
     pub extensions: BTreeMap<String, Vec<String>>,
+    pub handlers: Vec<HandlerRecommendationPreference>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HandlerRecommendationPreference {
+    pub kind: AssociationKind,
+    pub identifier: String,
+    #[serde(default)]
+    pub role: HandlerRole,
+    pub applications: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -75,6 +86,8 @@ struct RawRecommendationPreferences {
     preferred_applications: Vec<String>,
     #[serde(default)]
     extensions: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    handlers: Vec<HandlerRecommendationPreference>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -824,9 +837,40 @@ fn normalize_recommendation_preferences(
             bail!("duplicate recommendation extension .{extension}");
         }
     }
+    let mut seen_handlers = BTreeSet::new();
+    let mut handlers = Vec::with_capacity(raw.handlers.len());
+    for handler in raw.handlers {
+        let target = AssociationTarget::new(handler.kind, &handler.identifier, handler.role)?;
+        if target.kind == AssociationKind::Extension {
+            bail!(
+                "recommendation handler {target} must use UTI, MIME, or URL-scheme kind; use recommendations.extensions for filename extensions"
+            );
+        }
+        if !seen_handlers.insert(target.clone()) {
+            bail!("duplicate recommendation handler {target}");
+        }
+        let applications = normalize_nonempty_ordered(
+            handler.applications,
+            &format!("recommendation application for {target}"),
+        )?;
+        handlers.push(HandlerRecommendationPreference {
+            kind: target.kind,
+            identifier: target.identifier,
+            role: target.role,
+            applications,
+        });
+    }
+    handlers.sort_by(|left, right| {
+        (&left.kind, &left.identifier, &left.role).cmp(&(
+            &right.kind,
+            &right.identifier,
+            &right.role,
+        ))
+    });
     Ok(RecommendationPreferences {
         preferred_applications,
         extensions,
+        handlers,
     })
 }
 
@@ -951,6 +995,12 @@ mod tests {
 
                 [recommendations.extensions]
                 ".MD" = ["com.example.TeamEditor", "com.example.Editor"]
+
+                [[recommendations.handlers]]
+                kind = "uti"
+                identifier = "Public.HTML"
+                role = "viewer"
+                applications = [" com.example.Browser "]
             "#,
         )
         .unwrap();
@@ -963,6 +1013,16 @@ mod tests {
         assert_eq!(
             policy.recommendations.extensions["md"],
             ["com.example.TeamEditor", "com.example.Editor"]
+        );
+        assert_eq!(policy.recommendations.handlers.len(), 1);
+        assert_eq!(
+            policy.recommendations.handlers[0],
+            HandlerRecommendationPreference {
+                kind: AssociationKind::Uti,
+                identifier: "public.html".to_owned(),
+                role: HandlerRole::Viewer,
+                applications: vec!["com.example.Browser".to_owned()],
+            }
         );
     }
 
@@ -980,6 +1040,18 @@ mod tests {
                 .to_string()
                 .contains("cannot be empty")
         );
+        assert!(Policy::parse(
+            "version = 1\n[[recommendations.handlers]]\nkind = 'extension'\nidentifier = 'md'\napplications = ['com.example.App']\n"
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("use recommendations.extensions"));
+        assert!(Policy::parse(
+            "version = 1\n[[recommendations.handlers]]\nkind = 'uti'\nidentifier = 'Public.HTML'\napplications = ['com.example.App']\n[[recommendations.handlers]]\nkind = 'uti'\nidentifier = 'public.html'\napplications = ['com.example.Other']\n"
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("duplicate recommendation handler"));
     }
 
     #[test]

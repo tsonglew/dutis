@@ -38,6 +38,23 @@ preferred_applications = ["com.microsoft.VSCode"]
 [recommendations.extensions]
 md = ["com.microsoft.VSCode", "com.apple.TextEdit"]
 
+[[recommendations.handlers]]
+kind = "uti"
+identifier = "public.plain-text"
+role = "viewer"
+applications = ["com.apple.TextEdit", "com.microsoft.VSCode"]
+
+[[recommendations.handlers]]
+kind = "mime"
+identifier = "text/plain"
+role = "editor"
+applications = ["com.microsoft.VSCode"]
+
+[[recommendations.handlers]]
+kind = "url_scheme"
+identifier = "vscode"
+applications = ["com.microsoft.VSCode"]
+
 [protected_associations]
 pdf = "com.apple.Preview"
 
@@ -61,13 +78,18 @@ application = "com.apple.TextEdit"
   extensions and may introduce a team-standard application that is not in the
   built-in profile. Preferences remain constrained by all allowlists and
   protected associations.
+- `recommendations.handlers` supplies ordered preferences for normalized UTI,
+  MIME, and URL-scheme targets. `role` defaults to `all`; URL schemes accept
+  only `all`. These typed targets are included in every profile recommendation,
+  but an application must be uniquely installed and explicitly declare the
+  requested handler and a compatible role before it can be proposed.
 - `protected_associations` permits an extension only when the target is the
   configured bundle identifier. This allows restoration to the protected value
   while denying changes away from it.
 - `protected_handlers` applies the same protection to a typed kind, identifier,
   and role tuple. The role defaults to `all`; URL schemes accept only `all`.
-- Unknown fields, invalid identifiers or roles, duplicate normalized targets,
-  and unknown versions fail closed.
+- Unknown fields, invalid identifiers or roles, empty or duplicate ordered
+  preferences, duplicate normalized targets, and unknown versions fail closed.
 
 Check a configuration against the current system state and policy without
 changing anything:

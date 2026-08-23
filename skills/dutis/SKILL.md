@@ -29,7 +29,9 @@ Use Dutis for macOS Launch Services associations. Preserve its
    recommendation strictly as a proposal, never as approval.
    Treat candidate `policy_eligible`, `policy_reasons`, and `source` fields as
    required evidence; do not substitute caller-provided preferences for the
-   effective local policy.
+   effective local policy. For UTI, MIME, and URL-scheme recommendations,
+   require `declares_target = true`; typed fleet preferences apply to every
+   profile recommendation but never authorize a mutation.
 3. Express multi-target changes as version 2 TOML. Build a fresh plan and
    run the policy check. Treat unresolved selectors or policy violations as a
    stop condition.

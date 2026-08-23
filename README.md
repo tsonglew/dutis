@@ -198,11 +198,24 @@ preferred_applications = ["com.microsoft.VSCode"]
 
 [recommendations.extensions]
 md = ["com.microsoft.VSCode", "com.apple.TextEdit"]
+
+[[recommendations.handlers]]
+kind = "uti"
+identifier = "public.plain-text"
+role = "viewer"
+applications = ["com.apple.TextEdit", "com.microsoft.VSCode"]
+
+[[recommendations.handlers]]
+kind = "url_scheme"
+identifier = "vscode"
+applications = ["com.microsoft.VSCode"]
 ```
 
 Results show each candidate's source, policy eligibility, installed paths,
-declared extension support, the proposed TOML, a deterministic plan digest, and
-the effective policy assessment. They never change system associations.
+declared target support, the proposed TOML, a deterministic plan digest, and
+the effective policy assessment. Typed UTI, MIME, and URL-scheme preferences
+require an exact compatible declaration from the installed application. They
+never change system associations.
 Review [profiles and recommendations](docs/profiles-and-recommendations.md) for
 selection rules and the safe path from a proposal to an approved apply.
 
