@@ -301,8 +301,6 @@ Acceptance criteria:
 - MCP callers cannot inject or replace policy, and no network control plane or
   new mutation path is introduced.
 
-## Near-term engineering sequence
-
 ## Phase 15: Event retention and dead-letter cleanup
 
 Status: implemented for v2.19.0
@@ -324,11 +322,34 @@ Acceptance criteria:
 - Malformed, oversized, mismatched, or non-regular records fail closed, and no
   maintenance command is exposed through MCP.
 
+## Phase 16: Typed fleet recommendation preferences
+
+Status: implemented for v2.20.0
+
+Extend locally deployed recommendation preferences across every association
+kind without creating a remote policy or mutation path.
+
+Acceptance criteria:
+
+- The version-one policy schema accepts ordered UTI, MIME, and URL-scheme
+  recommendation handlers with normalized identifiers and roles while
+  remaining backward compatible.
+- Typed preferences participate in the same protected-target, kind, and
+  application allowlists as extension recommendations.
+- A typed candidate must be uniquely installed and explicitly declare the
+  requested handler and compatible role before it can enter a proposal.
+- CLI and MCP query current defaults through the role-aware backend and return
+  typed proposed configuration, deterministic plan, candidate evidence, and
+  policy assessment without adding a write capability.
+- Recommendation JSON retains its legacy `extension` identifier and
+  `declares_extension` fields while additive typed fields identify every target
+  consistently.
+
 ## Near-term engineering sequence
 
-1. Release Phase 15 and validate retention thresholds against production-like
-   event volumes and operator runbooks.
-2. Extend recommendation preferences to typed UTI, MIME, and URL-scheme
-   associations after gathering fleet usage evidence.
-3. Add optional metrics summaries for event delivery health without exposing
+1. Release Phase 16 and validate typed preference declarations against a
+   representative fleet application catalog.
+2. Add optional metrics summaries for event delivery health without exposing
    payload contents.
+3. Add configurable profile overlays only after typed preference usage shows
+   which reusable association groups are stable across fleets.

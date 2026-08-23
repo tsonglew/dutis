@@ -16,6 +16,26 @@ preferred_applications = ["com.microsoft.VSCode", "com.apple.TextEdit"]
 md = ["com.microsoft.VSCode"]
 txt = ["com.apple.TextEdit", "com.microsoft.VSCode"]
 
+# Typed preferences apply to every profile recommendation. A candidate is only
+# proposed when the installed application declares the exact handler and a
+# compatible role. URL schemes omit role because only "all" is valid.
+[[recommendations.handlers]]
+kind = "uti"
+identifier = "public.plain-text"
+role = "viewer"
+applications = ["com.apple.TextEdit", "com.microsoft.VSCode"]
+
+[[recommendations.handlers]]
+kind = "mime"
+identifier = "text/plain"
+role = "editor"
+applications = ["com.microsoft.VSCode", "com.apple.TextEdit"]
+
+[[recommendations.handlers]]
+kind = "url_scheme"
+identifier = "vscode"
+applications = ["com.microsoft.VSCode"]
+
 # A protected extension may only remain on, or be restored to, this bundle ID.
 [protected_associations]
 pdf = "com.apple.Preview"

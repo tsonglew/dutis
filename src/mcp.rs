@@ -11,7 +11,7 @@ use crate::governance::{
 };
 use crate::launch_services;
 use crate::planner::{build_plan, AssociationPlan};
-use crate::profiles::{find_profile, profiles, recommend_profile_with_policy};
+use crate::profiles::{find_profile, profiles, recommend_profile_with_policy_typed};
 use crate::snapshot::{build_rollback_plan, SnapshotReason, SnapshotStore};
 use crate::system;
 use anyhow::{anyhow, Context, Result};
@@ -130,10 +130,10 @@ impl McpBackend for SystemBackend {
         let catalog = ApplicationCatalog::scan()?;
         system::duti_version()?;
         let policy = LoadedPolicy::from_environment()?;
-        let recommendation = recommend_profile_with_policy(
+        let recommendation = recommend_profile_with_policy_typed(
             &profile,
             &catalog.applications,
-            system::query_default_app,
+            system::query_default_handler,
             &policy.policy,
         )?;
         Ok(json!({

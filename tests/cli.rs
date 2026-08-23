@@ -931,7 +931,7 @@ fn policy_show_redacts_token_hash_and_audit_starts_empty() {
     fs::write(
         &policy_path,
         format!(
-            "version = 1\napproval_mode = 'token'\napproval_token_sha256 = '{secret_hash}'\n[recommendations]\npreferred_applications = ['com.example.TeamEditor']\n[recommendations.extensions]\nmd = ['com.example.Markdown']\n"
+            "version = 1\napproval_mode = 'token'\napproval_token_sha256 = '{secret_hash}'\n[recommendations]\npreferred_applications = ['com.example.TeamEditor']\n[recommendations.extensions]\nmd = ['com.example.Markdown']\n[[recommendations.handlers]]\nkind = 'uti'\nidentifier = 'Public.HTML'\nrole = 'viewer'\napplications = ['com.example.Browser']\n"
         ),
     )
     .unwrap();
@@ -952,6 +952,18 @@ fn policy_show_redacts_token_hash_and_audit_starts_empty() {
     assert_eq!(
         policy["data"]["recommendations"]["extensions"]["md"][0],
         "com.example.Markdown"
+    );
+    assert_eq!(
+        policy["data"]["recommendations"]["handlers"][0]["kind"],
+        "uti"
+    );
+    assert_eq!(
+        policy["data"]["recommendations"]["handlers"][0]["identifier"],
+        "public.html"
+    );
+    assert_eq!(
+        policy["data"]["recommendations"]["handlers"][0]["applications"][0],
+        "com.example.Browser"
     );
     assert!(!String::from_utf8(policy_output.stdout)
         .unwrap()

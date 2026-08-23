@@ -31,7 +31,7 @@ use dutis::planner::{
     PlannedApplication,
 };
 use dutis::profiles::{
-    find_profile, profiles, recommend_profile_with_policy, ProfileRecommendation,
+    find_profile, profiles, recommend_profile_with_policy_typed, ProfileRecommendation,
 };
 use dutis::snapshot::{
     build_rollback_plan, capture_targets, SnapshotReason, SnapshotStore, SnapshotSummary,
@@ -1084,10 +1084,10 @@ fn run_recommend(args: RecommendArgs) -> Result<(), CliError> {
     system::duti_version().map_err(|error| CliError::dependency(format!("{error:#}")))?;
     let policy = LoadedPolicy::from_environment()
         .map_err(|error| CliError::usage(format!("failed to load policy: {error:#}")))?;
-    let recommendation = recommend_profile_with_policy(
+    let recommendation = recommend_profile_with_policy_typed(
         &profile,
         &catalog.applications,
-        system::query_default_app,
+        system::query_default_handler,
         &policy.policy,
     )
     .map_err(|error| CliError::operation(format!("failed to build recommendation: {error:#}")))?;
@@ -1109,8 +1109,8 @@ fn run_recommend(args: RecommendArgs) -> Result<(), CliError> {
         println!("{}", result.recommendation.description);
         for item in &result.recommendation.recommendations {
             println!(
-                "\n{:?} .{}: {}",
-                item.action, item.extension, item.explanation
+                "\n{:?} {}: {}",
+                item.action, item.association, item.explanation
             );
             for candidate in &item.evidence {
                 let status = if candidate.selected {
@@ -1130,14 +1130,14 @@ fn run_recommend(args: RecommendArgs) -> Result<(), CliError> {
                     format!("blocked: {}", candidate.policy_reasons.join(", "))
                 };
                 println!(
-                    "  {}. {} [{}; source={}; policy={}; installed={}; declares_extension={}]{}",
+                    "  {}. {} [{}; source={}; policy={}; installed={}; declares_target={}]{}",
                     candidate.priority,
                     candidate.bundle_id,
                     status,
                     candidate.source.as_str(),
                     policy_status,
                     candidate.installed_paths.len(),
-                    candidate.declares_extension,
+                    candidate.declares_target,
                     if paths.is_empty() {
                         String::new()
                     } else {
