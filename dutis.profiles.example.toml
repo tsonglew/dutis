@@ -1,0 +1,33 @@
+version = 1
+
+# Extend an existing built-in profile. Overlay applications are considered
+# before built-in candidates; duplicate bundle IDs are removed.
+[[profiles]]
+name = "developer"
+description = "Team development defaults."
+
+[[profiles.associations]]
+kind = "extension"
+identifier = "md"
+applications = ["com.example.TeamEditor", "dev.zed.Zed"]
+
+[[profiles.associations]]
+kind = "uti"
+identifier = "public.source-code"
+role = "editor"
+applications = ["com.example.TeamEditor"]
+
+# Add a custom profile. New profiles require a non-empty description.
+[[profiles]]
+name = "support-team"
+description = "Support documents and web links."
+
+[[profiles.associations]]
+kind = "extension"
+identifier = "txt"
+applications = ["com.apple.TextEdit"]
+
+[[profiles.associations]]
+kind = "url_scheme"
+identifier = "https"
+applications = ["com.apple.Safari"]

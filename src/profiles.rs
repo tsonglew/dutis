@@ -5,10 +5,14 @@ use crate::config::{AssociationRule, DutisConfig, CONFIG_VERSION};
 use crate::governance::Policy;
 use crate::planner::{assemble_plan, AssociationPlan, PlanAction, PlanEntry, PlannedApplication};
 use crate::system::DefaultApplication;
-use anyhow::Result;
-use serde::Serialize;
-use std::collections::BTreeMap;
+use anyhow::{bail, Context, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+
+pub const PROFILE_OVERLAY_VERSION: u32 = 1;
+pub const PROFILE_FILE_ENV: &str = "DUTIS_PROFILE_FILE";
+const MAX_PROFILE_FILE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct ProfileDefinition {
@@ -27,6 +31,58 @@ pub struct ProfileAssociation {
 pub struct ProfileCandidate {
     pub bundle_id: &'static str,
     pub rationale: &'static str,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+pub struct EffectiveProfileDefinition {
+    pub name: String,
+    pub description: String,
+    pub associations: Vec<EffectiveProfileAssociation>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+pub struct EffectiveProfileAssociation {
+    pub association: AssociationTarget,
+    pub extension: String,
+    pub candidates: Vec<EffectiveProfileCandidate>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+pub struct EffectiveProfileCandidate {
+    pub bundle_id: String,
+    pub rationale: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileOverlayDocument {
+    version: u32,
+    #[serde(default)]
+    profiles: Vec<ProfileOverlay>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileOverlay {
+    name: String,
+    description: Option<String>,
+    #[serde(default)]
+    replace: bool,
+    #[serde(default)]
+    associations: Vec<ProfileAssociationOverlay>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileAssociationOverlay {
+    #[serde(default)]
+    kind: AssociationKind,
+    identifier: String,
+    #[serde(default)]
+    role: HandlerRole,
+    #[serde(default)]
+    replace_candidates: bool,
+    applications: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
@@ -121,6 +177,233 @@ pub fn find_profile(name: &str) -> Option<ProfileDefinition> {
         .find(|profile| profile.name.eq_ignore_ascii_case(name.trim()))
 }
 
+pub fn effective_profiles() -> Result<Vec<EffectiveProfileDefinition>> {
+    let mut effective = profiles()
+        .into_iter()
+        .map(EffectiveProfileDefinition::from)
+        .collect::<Vec<_>>();
+    let Some(path) = profile_overlay_path()? else {
+        return Ok(effective);
+    };
+    let metadata = std::fs::symlink_metadata(&path)
+        .with_context(|| format!("failed to inspect profile overlay {}", path.display()))?;
+    if !metadata.file_type().is_file() {
+        bail!("profile overlay is not a regular file: {}", path.display());
+    }
+    if metadata.len() > MAX_PROFILE_FILE_BYTES {
+        bail!("profile overlay {} exceeds the 1 MiB limit", path.display());
+    }
+    let contents = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed to read profile overlay {}", path.display()))?;
+    apply_profile_overlay_document(&mut effective, &contents)
+        .with_context(|| format!("invalid profile overlay {}", path.display()))?;
+    Ok(effective)
+}
+
+fn apply_profile_overlay_document(
+    effective: &mut Vec<EffectiveProfileDefinition>,
+    contents: &str,
+) -> Result<()> {
+    let document: ProfileOverlayDocument =
+        toml::from_str(contents).context("failed to parse profile overlay TOML")?;
+    if document.version != PROFILE_OVERLAY_VERSION {
+        bail!(
+            "unsupported profile overlay version {}; expected {}",
+            document.version,
+            PROFILE_OVERLAY_VERSION
+        );
+    }
+    apply_profile_overlays(effective, document.profiles)?;
+    Ok(())
+}
+
+pub fn find_effective_profile(name: &str) -> Result<Option<EffectiveProfileDefinition>> {
+    let name = normalize_profile_name(name)?;
+    Ok(effective_profiles()?
+        .into_iter()
+        .find(|profile| profile.name == name))
+}
+
+impl From<ProfileDefinition> for EffectiveProfileDefinition {
+    fn from(profile: ProfileDefinition) -> Self {
+        Self {
+            name: profile.name.to_owned(),
+            description: profile.description.to_owned(),
+            associations: profile
+                .associations
+                .into_iter()
+                .map(|association| {
+                    let target = AssociationTarget::extension(association.extension)
+                        .expect("built-in profile extension is valid");
+                    EffectiveProfileAssociation {
+                        extension: target.identifier.clone(),
+                        association: target,
+                        candidates: association
+                            .candidates
+                            .into_iter()
+                            .map(|candidate| EffectiveProfileCandidate {
+                                bundle_id: candidate.bundle_id.to_owned(),
+                                rationale: candidate.rationale.to_owned(),
+                            })
+                            .collect(),
+                    }
+                })
+                .collect(),
+        }
+    }
+}
+
+fn profile_overlay_path() -> Result<Option<PathBuf>> {
+    if let Some(path) = std::env::var_os(PROFILE_FILE_ENV).filter(|value| !value.is_empty()) {
+        let path = PathBuf::from(path);
+        if !path.exists() {
+            bail!("profile overlay does not exist: {}", path.display());
+        }
+        return Ok(Some(path));
+    }
+    let path = if let Some(state) =
+        std::env::var_os("DUTIS_STATE_DIR").filter(|value| !value.is_empty())
+    {
+        PathBuf::from(state).join("profiles.toml")
+    } else if let Some(home) = std::env::var_os("HOME") {
+        PathBuf::from(home).join("Library/Application Support/dutis/profiles.toml")
+    } else {
+        return Ok(None);
+    };
+    Ok(path.exists().then_some(path))
+}
+
+fn apply_profile_overlays(
+    profiles: &mut Vec<EffectiveProfileDefinition>,
+    overlays: Vec<ProfileOverlay>,
+) -> Result<()> {
+    let mut seen_profiles = BTreeSet::new();
+    for overlay in overlays {
+        let name = normalize_profile_name(&overlay.name)?;
+        if !seen_profiles.insert(name.clone()) {
+            bail!("duplicate profile overlay '{name}'");
+        }
+        let existing = profiles.iter().position(|profile| profile.name == name);
+        let description = overlay
+            .description
+            .map(|value| normalize_nonempty(&value, "profile description"))
+            .transpose()?;
+        let index = if let Some(index) = existing {
+            if let Some(description) = description {
+                profiles[index].description = description;
+            }
+            if overlay.replace {
+                profiles[index].associations.clear();
+            }
+            index
+        } else {
+            let description = description
+                .ok_or_else(|| anyhow::anyhow!("custom profile '{name}' requires a description"))?;
+            profiles.push(EffectiveProfileDefinition {
+                name: name.clone(),
+                description,
+                associations: Vec::new(),
+            });
+            profiles.len() - 1
+        };
+
+        let mut seen_targets = BTreeSet::new();
+        for association in overlay.associations {
+            let target = AssociationTarget::new(
+                association.kind,
+                &association.identifier,
+                association.role,
+            )?;
+            if !seen_targets.insert(target.clone()) {
+                bail!("duplicate profile target {target} in '{name}'");
+            }
+            let candidates = normalize_overlay_candidates(association.applications, &target)?;
+            let profile = &mut profiles[index];
+            if let Some(existing) = profile
+                .associations
+                .iter_mut()
+                .find(|item| item.association == target)
+            {
+                if association.replace_candidates {
+                    existing.candidates = candidates;
+                } else {
+                    let mut merged = candidates;
+                    let mut seen = merged
+                        .iter()
+                        .map(|candidate| candidate.bundle_id.clone())
+                        .collect::<BTreeSet<_>>();
+                    merged.extend(
+                        existing
+                            .candidates
+                            .iter()
+                            .filter(|candidate| seen.insert(candidate.bundle_id.clone()))
+                            .cloned(),
+                    );
+                    existing.candidates = merged;
+                }
+            } else {
+                profile.associations.push(EffectiveProfileAssociation {
+                    extension: target.identifier.clone(),
+                    association: target,
+                    candidates,
+                });
+            }
+        }
+        if profiles[index].associations.is_empty() {
+            bail!("profile '{name}' must contain at least one association");
+        }
+    }
+    Ok(())
+}
+
+fn normalize_profile_name(value: &str) -> Result<String> {
+    let name = value.trim().to_ascii_lowercase();
+    if name.is_empty()
+        || name.len() > 64
+        || !name
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_alphanumeric())
+        || !name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+    {
+        bail!("invalid profile name '{value}'");
+    }
+    Ok(name)
+}
+
+fn normalize_nonempty(value: &str, label: &str) -> Result<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        bail!("{label} cannot be empty");
+    }
+    Ok(value.to_owned())
+}
+
+fn normalize_overlay_candidates(
+    applications: Vec<String>,
+    target: &AssociationTarget,
+) -> Result<Vec<EffectiveProfileCandidate>> {
+    if applications.is_empty() {
+        bail!("profile target {target} requires at least one application");
+    }
+    let mut seen = BTreeSet::new();
+    applications
+        .into_iter()
+        .map(|application| {
+            let bundle_id = normalize_nonempty(&application, "profile application")?;
+            if !seen.insert(bundle_id.clone()) {
+                bail!("duplicate profile application '{bundle_id}' for {target}");
+            }
+            Ok(EffectiveProfileCandidate {
+                rationale: "Configured by the local profile overlay.".to_owned(),
+                bundle_id,
+            })
+        })
+        .collect()
+}
+
 pub fn recommend_profile<F>(
     profile: &ProfileDefinition,
     applications: &[Application],
@@ -129,8 +412,9 @@ pub fn recommend_profile<F>(
 where
     F: FnMut(&str) -> Result<Option<DefaultApplication>>,
 {
+    let profile = EffectiveProfileDefinition::from(profile.clone());
     recommend_profile_internal(
-        profile,
+        &profile,
         applications,
         &mut |target| query_default(&target.identifier),
         None,
@@ -147,8 +431,9 @@ pub fn recommend_profile_with_policy<F>(
 where
     F: FnMut(&str) -> Result<Option<DefaultApplication>>,
 {
+    let profile = EffectiveProfileDefinition::from(profile.clone());
     recommend_profile_internal(
-        profile,
+        &profile,
         applications,
         &mut |target| query_default(&target.identifier),
         Some(policy),
@@ -158,6 +443,25 @@ where
 
 pub fn recommend_profile_with_policy_typed<F>(
     profile: &ProfileDefinition,
+    applications: &[Application],
+    mut query_default: F,
+    policy: &Policy,
+) -> Result<ProfileRecommendation>
+where
+    F: FnMut(&AssociationTarget) -> Result<Option<DefaultApplication>>,
+{
+    let profile = EffectiveProfileDefinition::from(profile.clone());
+    recommend_profile_internal(
+        &profile,
+        applications,
+        &mut query_default,
+        Some(policy),
+        true,
+    )
+}
+
+pub fn recommend_effective_profile_with_policy<F>(
+    profile: &EffectiveProfileDefinition,
     applications: &[Application],
     mut query_default: F,
     policy: &Policy,
@@ -175,7 +479,7 @@ where
 }
 
 fn recommend_profile_internal<F>(
-    profile: &ProfileDefinition,
+    profile: &EffectiveProfileDefinition,
     applications: &[Application],
     query_default: &mut F,
     policy: Option<&Policy>,
@@ -190,21 +494,19 @@ where
     let mut inputs = profile
         .associations
         .iter()
-        .map(|association| {
-            Ok(RecommendationInput {
-                target: AssociationTarget::extension(association.extension)?,
-                profile_candidates: association
-                    .candidates
-                    .iter()
-                    .map(|candidate| OwnedProfileCandidate {
-                        bundle_id: candidate.bundle_id.to_owned(),
-                        rationale: candidate.rationale.to_owned(),
-                    })
-                    .collect(),
-                requires_declaration: false,
-            })
+        .map(|association| RecommendationInput {
+            target: association.association.clone(),
+            profile_candidates: association
+                .candidates
+                .iter()
+                .map(|candidate| OwnedProfileCandidate {
+                    bundle_id: candidate.bundle_id.clone(),
+                    rationale: candidate.rationale.clone(),
+                })
+                .collect(),
+            requires_declaration: association.association.kind != AssociationKind::Extension,
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Vec<_>>();
     if include_typed_preferences {
         if let Some(policy) = policy {
             for preference in &policy.recommendations.handlers {
@@ -213,6 +515,9 @@ where
                     &preference.identifier,
                     preference.role,
                 )?;
+                if inputs.iter().any(|input| input.target == target) {
+                    continue;
+                }
                 inputs.push(RecommendationInput {
                     target,
                     profile_candidates: Vec::new(),
@@ -853,6 +1158,191 @@ mod tests {
         );
         assert!(find_profile("DEVELOPER").is_some());
         assert!(find_profile("unknown").is_none());
+    }
+
+    #[test]
+    fn profile_overlays_extend_builtins_and_add_typed_custom_profiles() {
+        let mut effective = profiles()
+            .into_iter()
+            .map(EffectiveProfileDefinition::from)
+            .collect::<Vec<_>>();
+        apply_profile_overlay_document(
+            &mut effective,
+            r#"
+                version = 1
+
+                [[profiles]]
+                name = "Developer"
+                description = "Team development defaults."
+
+                [[profiles.associations]]
+                kind = "extension"
+                identifier = ".MD"
+                applications = ["com.example.TeamEditor", "dev.zed.Zed"]
+
+                [[profiles.associations]]
+                kind = "uti"
+                identifier = "Public.Source-Code"
+                role = "editor"
+                applications = ["com.example.TeamEditor"]
+
+                [[profiles]]
+                name = "support-team"
+                description = "Support links and text."
+
+                [[profiles.associations]]
+                kind = "url_scheme"
+                identifier = "HTTPS://"
+                applications = ["com.example.Browser"]
+            "#,
+        )
+        .unwrap();
+
+        let developer = effective
+            .iter()
+            .find(|profile| profile.name == "developer")
+            .unwrap();
+        assert_eq!(developer.description, "Team development defaults.");
+        let markdown = developer
+            .associations
+            .iter()
+            .find(|item| item.association.identifier == "md")
+            .unwrap();
+        assert_eq!(markdown.candidates[0].bundle_id, "com.example.TeamEditor");
+        assert_eq!(markdown.candidates[1].bundle_id, "dev.zed.Zed");
+        assert_eq!(
+            markdown
+                .candidates
+                .iter()
+                .filter(|candidate| candidate.bundle_id == "dev.zed.Zed")
+                .count(),
+            1
+        );
+        assert!(developer.associations.iter().any(|item| {
+            item.association.kind == AssociationKind::Uti
+                && item.association.identifier == "public.source-code"
+                && item.association.role == HandlerRole::Editor
+        }));
+
+        let custom = effective
+            .iter()
+            .find(|profile| profile.name == "support-team")
+            .unwrap();
+        assert_eq!(custom.associations.len(), 1);
+        assert_eq!(
+            custom.associations[0].association.kind,
+            AssociationKind::UrlScheme
+        );
+        assert_eq!(custom.associations[0].association.identifier, "https");
+    }
+
+    #[test]
+    fn repository_profile_overlay_example_uses_the_current_schema() {
+        let mut effective = profiles()
+            .into_iter()
+            .map(EffectiveProfileDefinition::from)
+            .collect::<Vec<_>>();
+        apply_profile_overlay_document(
+            &mut effective,
+            include_str!("../dutis.profiles.example.toml"),
+        )
+        .unwrap();
+        assert!(effective
+            .iter()
+            .any(|profile| profile.name == "support-team"));
+    }
+
+    #[test]
+    fn profile_overlay_can_replace_builtin_candidates_and_rejects_invalid_input() {
+        let mut effective = profiles()
+            .into_iter()
+            .map(EffectiveProfileDefinition::from)
+            .collect::<Vec<_>>();
+        apply_profile_overlay_document(
+            &mut effective,
+            r#"
+                version = 1
+                [[profiles]]
+                name = "minimal"
+                replace = true
+                [[profiles.associations]]
+                identifier = "txt"
+                replace_candidates = true
+                applications = ["com.example.Editor"]
+            "#,
+        )
+        .unwrap();
+        let minimal = effective
+            .iter()
+            .find(|profile| profile.name == "minimal")
+            .unwrap();
+        assert_eq!(minimal.associations.len(), 1);
+        assert_eq!(minimal.associations[0].candidates.len(), 1);
+        assert_eq!(
+            minimal.associations[0].candidates[0].bundle_id,
+            "com.example.Editor"
+        );
+
+        let invalid_documents = [
+            "version = 2",
+            "version = 1\n[[profiles]]\nname = 'new'",
+            "version = 1\n[[profiles]]\nname = '--'\ndescription = 'invalid'\n[[profiles.associations]]\nidentifier = 'txt'\napplications = ['x']",
+            "version = 1\n[[profiles]]\nname = 'developer'\n[[profiles.associations]]\nidentifier = 'md'\napplications = ['x', 'x']",
+            "version = 1\n[[profiles]]\nname = 'developer'\n[[profiles.associations]]\nkind = 'url_scheme'\nidentifier = 'https'\nrole = 'viewer'\napplications = ['x']",
+        ];
+        for document in invalid_documents {
+            let mut effective = profiles()
+                .into_iter()
+                .map(EffectiveProfileDefinition::from)
+                .collect::<Vec<_>>();
+            assert!(apply_profile_overlay_document(&mut effective, document).is_err());
+        }
+    }
+
+    #[test]
+    fn typed_overlay_profile_uses_the_governed_recommendation_pipeline() {
+        let mut effective = profiles()
+            .into_iter()
+            .map(EffectiveProfileDefinition::from)
+            .collect::<Vec<_>>();
+        apply_profile_overlay_document(
+            &mut effective,
+            r#"
+                version = 1
+                [[profiles]]
+                name = "writers"
+                description = "Local writing tools."
+                [[profiles.associations]]
+                kind = "mime"
+                identifier = "Text/Plain"
+                role = "editor"
+                applications = ["com.example.Writer"]
+            "#,
+        )
+        .unwrap();
+        let profile = effective
+            .iter()
+            .find(|profile| profile.name == "writers")
+            .unwrap();
+        let mut writer = app("Writer", "com.example.Writer", &[]);
+        writer.handlers.push(crate::plist_parser::DeclaredHandler {
+            kind: AssociationKind::Mime,
+            identifier: "text/plain".to_owned(),
+            role: HandlerRole::Editor,
+            source: crate::plist_parser::HandlerDeclarationSource::DocumentType,
+        });
+
+        let recommendation = recommend_effective_profile_with_policy(
+            profile,
+            &[writer],
+            |_| Ok(None),
+            &Policy::default(),
+        )
+        .unwrap();
+        assert_eq!(recommendation.summary.changes, 1);
+        assert_eq!(recommendation.plan.entries[0].kind, AssociationKind::Mime);
+        assert_eq!(recommendation.plan.entries[0].extension, "text/plain");
+        assert!(recommendation.recommendations[0].evidence[0].declares_target);
     }
 
     #[test]

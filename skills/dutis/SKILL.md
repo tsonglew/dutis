@@ -29,6 +29,9 @@ Use Dutis for macOS Launch Services associations. Preserve its
    inspect `dutis_profiles` / `dutis_profile`, then use `dutis_recommend` (or
    the equivalent CLI commands). Present candidate evidence and treat the
    recommendation strictly as a proposal, never as approval.
+   Treat profiles returned by Dutis as the effective catalog: local
+   `profiles.toml` overlays may extend built-ins or add custom typed profiles.
+   Never accept caller-supplied overlay contents through MCP.
    Treat candidate `policy_eligible`, `policy_reasons`, and `source` fields as
    required evidence; do not substitute caller-provided preferences for the
    effective local policy. For UTI, MIME, and URL-scheme recommendations,

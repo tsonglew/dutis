@@ -23,6 +23,7 @@ A Rust application for inspecting and safely managing macOS default handlers for
 - 🛡️ **Policy and Audit**: Enforce local allowlists and approvals with durable, verified mutation records
 - 💡 **Explainable Profiles**: Generate evidence-backed developer, designer, media, or minimal proposals without changing the system
 - 🏢 **Fleet-Aware Recommendations**: Apply local allowlists, protected targets, and ordered team preferences before proposing applications
+- 🧩 **Profile Overlays**: Extend built-in profiles or add typed team profiles from a strict local configuration
 - 👀 **Drift Monitoring**: Detect association changes continuously, notify through macOS, and optionally remediate through snapshots and policy
 - 🔗 **Typed Associations**: Manage extensions, UTIs, MIME types, URL schemes, and Launch Services roles through one verified pipeline
 - 📡 **Event Sinks**: Stream versioned drift and mutation lifecycle events to private JSONL logs or trusted local commands
@@ -189,6 +190,12 @@ dutis profile list
 dutis profile show developer --json
 dutis recommend developer --json
 ```
+
+Customize built-ins or add team profiles with
+`$DUTIS_STATE_DIR/profiles.toml` (or `DUTIS_PROFILE_FILE`). Start from
+[`dutis.profiles.example.toml`](dutis.profiles.example.toml); overlays support
+extensions, UTIs, MIME types, URL schemes, roles, ordered candidates, and
+explicit replacement of built-in candidates.
 
 Recommendations use the effective local policy before selecting a target.
 Teams can deploy preferences without a remote control plane:
