@@ -334,6 +334,8 @@ pub struct EventsArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum EventsCommand {
+    /// Summarize event delivery health without exposing event payloads
+    Health(OutputArgs),
     /// List events waiting in the durable outbox
     Pending(OutputArgs),
     /// Deliver pending events through the configured event command
@@ -524,6 +526,13 @@ mod tests {
 
     #[test]
     fn parses_event_outbox_commands() {
+        let cli = Cli::try_parse_from(["dutis", "events", "health", "--json"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(CliCommand::Events(EventsArgs {
+                command: EventsCommand::Health(OutputArgs { json: true })
+            }))
+        ));
         let cli = Cli::try_parse_from(["dutis", "events", "pending", "--json"]).unwrap();
         assert!(matches!(
             cli.command,

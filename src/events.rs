@@ -1,6 +1,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -15,6 +16,7 @@ pub const EVENT_COMMAND_ENV: &str = "DUTIS_EVENT_COMMAND";
 pub const EVENT_OUTBOX_ENV: &str = "DUTIS_EVENT_OUTBOX";
 pub const PENDING_EVENT_SCHEMA_VERSION: u32 = 1;
 pub const DEAD_LETTER_SCHEMA_VERSION: u32 = 1;
+pub const EVENT_HEALTH_SCHEMA_VERSION: u32 = 1;
 
 const MAX_EVENT_RECORD_BYTES: u64 = 4 * 1024 * 1024;
 
@@ -52,6 +54,16 @@ pub enum EventSource {
     Watcher,
     Mcp,
     Governance,
+}
+
+impl EventSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Watcher => "watcher",
+            Self::Mcp => "mcp",
+            Self::Governance => "governance",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -137,6 +149,59 @@ pub struct OutboxMaintenanceReport {
     pub pending: usize,
     pub dead_letters: usize,
     pub events: Vec<OutboxMaintenanceItem>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EventDeliveryHealthStatus {
+    Healthy,
+    Degraded,
+    AttentionRequired,
+}
+
+impl EventDeliveryHealthStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Healthy => "healthy",
+            Self::Degraded => "degraded",
+            Self::AttentionRequired => "attention_required",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+pub struct PendingDeliveryMetrics {
+    pub count: usize,
+    pub total_attempts: u64,
+    pub max_attempts: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oldest_queued_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_attempted_at: Option<String>,
+    pub by_event_type: BTreeMap<String, usize>,
+    pub by_source: BTreeMap<String, usize>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+pub struct DeadLetterMetrics {
+    pub count: usize,
+    pub total_attempts: u64,
+    pub max_attempts: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oldest_dead_lettered_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_dead_lettered_at: Option<String>,
+    pub by_event_type: BTreeMap<String, usize>,
+    pub by_source: BTreeMap<String, usize>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+pub struct EventDeliveryHealth {
+    pub schema_version: u32,
+    pub generated_at: String,
+    pub status: EventDeliveryHealthStatus,
+    pub pending: PendingDeliveryMetrics,
+    pub dead_letters: DeadLetterMetrics,
 }
 
 impl EventEnvelope {
@@ -392,6 +457,86 @@ impl EventOutbox {
                 reasons: record.reasons,
             })
             .collect())
+    }
+
+    pub fn health(&self) -> Result<EventDeliveryHealth> {
+        let pending = self.load_all()?;
+        let dead_letters = self.load_all_dead_letters()?;
+        let (oldest_queued_at, _) = timestamp_range(
+            pending.iter().map(|record| record.queued_at.as_str()),
+            "queued_at",
+        )?;
+        let (_, latest_attempted_at) = timestamp_range(
+            pending
+                .iter()
+                .map(|record| record.last_attempted_at.as_str()),
+            "last_attempted_at",
+        )?;
+        let (oldest_dead_lettered_at, latest_dead_lettered_at) = timestamp_range(
+            dead_letters
+                .iter()
+                .map(|record| record.dead_lettered_at.as_str()),
+            "dead_lettered_at",
+        )?;
+
+        let mut pending_by_event_type = empty_event_type_counts();
+        let mut pending_by_source = empty_event_source_counts();
+        let mut pending_attempts = 0_u64;
+        let mut pending_max_attempts = 0_u64;
+        for record in &pending {
+            increment(&mut pending_by_event_type, record.event.event_type.as_str());
+            increment(&mut pending_by_source, record.event.source.as_str());
+            pending_attempts = pending_attempts.saturating_add(record.attempts);
+            pending_max_attempts = pending_max_attempts.max(record.attempts);
+        }
+
+        let mut dead_letter_by_event_type = empty_event_type_counts();
+        let mut dead_letter_by_source = empty_event_source_counts();
+        let mut dead_letter_attempts = 0_u64;
+        let mut dead_letter_max_attempts = 0_u64;
+        for record in &dead_letters {
+            increment(
+                &mut dead_letter_by_event_type,
+                record.pending.event.event_type.as_str(),
+            );
+            increment(
+                &mut dead_letter_by_source,
+                record.pending.event.source.as_str(),
+            );
+            dead_letter_attempts = dead_letter_attempts.saturating_add(record.pending.attempts);
+            dead_letter_max_attempts = dead_letter_max_attempts.max(record.pending.attempts);
+        }
+
+        let status = if !dead_letters.is_empty() {
+            EventDeliveryHealthStatus::AttentionRequired
+        } else if !pending.is_empty() {
+            EventDeliveryHealthStatus::Degraded
+        } else {
+            EventDeliveryHealthStatus::Healthy
+        };
+        Ok(EventDeliveryHealth {
+            schema_version: EVENT_HEALTH_SCHEMA_VERSION,
+            generated_at: current_timestamp()?,
+            status,
+            pending: PendingDeliveryMetrics {
+                count: pending.len(),
+                total_attempts: pending_attempts,
+                max_attempts: pending_max_attempts,
+                oldest_queued_at,
+                latest_attempted_at,
+                by_event_type: pending_by_event_type,
+                by_source: pending_by_source,
+            },
+            dead_letters: DeadLetterMetrics {
+                count: dead_letters.len(),
+                total_attempts: dead_letter_attempts,
+                max_attempts: dead_letter_max_attempts,
+                oldest_dead_lettered_at,
+                latest_dead_lettered_at,
+                by_event_type: dead_letter_by_event_type,
+                by_source: dead_letter_by_source,
+            },
+        })
     }
 
     pub fn archive(
@@ -768,6 +913,64 @@ fn cutoff_from_days(days: u64) -> Result<OffsetDateTime> {
 
 fn parse_timestamp(value: &str, field: &str) -> Result<OffsetDateTime> {
     OffsetDateTime::parse(value, &Rfc3339).with_context(|| format!("invalid {field} timestamp"))
+}
+
+fn timestamp_range<'a>(
+    values: impl IntoIterator<Item = &'a str>,
+    field: &str,
+) -> Result<(Option<String>, Option<String>)> {
+    let mut oldest: Option<(OffsetDateTime, String)> = None;
+    let mut latest: Option<(OffsetDateTime, String)> = None;
+    for value in values {
+        let parsed = parse_timestamp(value, field)?;
+        if oldest
+            .as_ref()
+            .is_none_or(|(timestamp, _)| parsed < *timestamp)
+        {
+            oldest = Some((parsed, value.to_owned()));
+        }
+        if latest
+            .as_ref()
+            .is_none_or(|(timestamp, _)| parsed > *timestamp)
+        {
+            latest = Some((parsed, value.to_owned()));
+        }
+    }
+    Ok((
+        oldest.map(|(_, value)| value),
+        latest.map(|(_, value)| value),
+    ))
+}
+
+fn empty_event_type_counts() -> BTreeMap<String, usize> {
+    [
+        EventType::DriftChecked,
+        EventType::MutationPending,
+        EventType::MutationDenied,
+        EventType::MutationFailed,
+        EventType::MutationCompleted,
+    ]
+    .into_iter()
+    .map(|event_type| (event_type.as_str().to_owned(), 0))
+    .collect()
+}
+
+fn empty_event_source_counts() -> BTreeMap<String, usize> {
+    [
+        EventSource::Watcher,
+        EventSource::Mcp,
+        EventSource::Governance,
+    ]
+    .into_iter()
+    .map(|source| (source.as_str().to_owned(), 0))
+    .collect()
+}
+
+fn increment(counts: &mut BTreeMap<String, usize>, key: &str) {
+    counts
+        .entry(key.to_owned())
+        .and_modify(|count| *count = count.saturating_add(1))
+        .or_insert(1);
 }
 
 fn validate_pending_event(pending: &PendingEvent) -> Result<()> {
@@ -1169,6 +1372,11 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("does not match its filename"));
+        assert!(outbox
+            .health()
+            .unwrap_err()
+            .to_string()
+            .contains("does not match its filename"));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1184,6 +1392,8 @@ mod tests {
         fs::write(&external, b"{}\n").unwrap();
         symlink(&external, directory.join("linked.json")).unwrap();
         let error = EventOutbox::new(&directory).pending().unwrap_err();
+        assert!(error.to_string().contains("not a regular file"));
+        let error = EventOutbox::new(&directory).health().unwrap_err();
         assert!(error.to_string().contains("not a regular file"));
         fs::remove_dir_all(root).unwrap();
     }
@@ -1252,6 +1462,66 @@ mod tests {
         assert!(outbox.dead_letters().unwrap().is_empty());
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn health_summarizes_backlog_without_exposing_event_contents() {
+        let root = temp_root("outbox-health");
+        let outbox = EventOutbox::new(root.join("outbox"));
+        let pending = EventEnvelope::new(
+            EventType::DriftChecked,
+            EventSource::Watcher,
+            &json!({"sensitive_payload": "must-not-leak"}),
+        )
+        .unwrap();
+        let dead_letter = EventEnvelope::new(
+            EventType::MutationFailed,
+            EventSource::Governance,
+            &json!({"secret": "also-must-not-leak"}),
+        )
+        .unwrap();
+        outbox.enqueue(&pending).unwrap();
+        outbox.enqueue(&dead_letter).unwrap();
+        outbox.enqueue(&dead_letter).unwrap();
+        outbox.archive(Some(2), None, true).unwrap();
+
+        let health = outbox.health().unwrap();
+        assert_eq!(health.status, EventDeliveryHealthStatus::AttentionRequired);
+        assert_eq!(health.schema_version, EVENT_HEALTH_SCHEMA_VERSION);
+        assert_eq!(health.pending.count, 1);
+        assert_eq!(health.pending.total_attempts, 1);
+        assert_eq!(health.pending.max_attempts, 1);
+        assert_eq!(health.pending.by_event_type["drift.checked"], 1);
+        assert_eq!(health.pending.by_event_type["mutation.failed"], 0);
+        assert_eq!(health.pending.by_source["watcher"], 1);
+        assert!(health.pending.oldest_queued_at.is_some());
+        assert!(health.pending.latest_attempted_at.is_some());
+        assert_eq!(health.dead_letters.count, 1);
+        assert_eq!(health.dead_letters.total_attempts, 2);
+        assert_eq!(health.dead_letters.max_attempts, 2);
+        assert_eq!(health.dead_letters.by_event_type["mutation.failed"], 1);
+        assert_eq!(health.dead_letters.by_source["governance"], 1);
+        assert!(health.dead_letters.oldest_dead_lettered_at.is_some());
+        assert!(health.dead_letters.latest_dead_lettered_at.is_some());
+
+        let encoded = serde_json::to_string(&health).unwrap();
+        assert!(!encoded.contains("must-not-leak"));
+        assert!(!encoded.contains(&pending.id));
+        assert!(!encoded.contains(&dead_letter.id));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn empty_outbox_health_is_healthy_with_stable_zero_buckets() {
+        let outbox = EventOutbox::new(temp_root("outbox-health-empty"));
+        let health = outbox.health().unwrap();
+        assert_eq!(health.status, EventDeliveryHealthStatus::Healthy);
+        assert_eq!(health.pending.count, 0);
+        assert_eq!(health.dead_letters.count, 0);
+        assert_eq!(health.pending.by_event_type.len(), 5);
+        assert_eq!(health.dead_letters.by_source.len(), 3);
+        assert!(health.pending.oldest_queued_at.is_none());
+        assert!(health.dead_letters.oldest_dead_lettered_at.is_none());
     }
 
     #[test]

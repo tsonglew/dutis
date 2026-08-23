@@ -31,6 +31,27 @@ does not contain HTTP endpoint or credential configuration. Event payloads can
 still contain local paths, bundle identifiers, requester identity, and plans,
 so the directory should remain private.
 
+## Inspect delivery health
+
+Use the payload-free health summary for dashboards, periodic checks, and agent
+triage:
+
+```bash
+dutis events health
+dutis events health --json
+```
+
+The versioned result reports `healthy` when both stores are empty, `degraded`
+when deliveries are pending, and `attention_required` when at least one dead
+letter exists. It includes pending and dead-letter counts, total and maximum
+attempts, oldest/latest timestamps, and stable zero-filled breakdowns by event
+type and source. It never includes event IDs, retention reasons, payloads, or
+outbox paths.
+
+Read-only MCP servers expose the same data through `dutis_event_health`. Both
+interfaces validate every stored record first and fail closed if an entry is
+malformed, oversized, mismatched, or not a regular file.
+
 ## Inspect pending events
 
 ```bash

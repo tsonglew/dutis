@@ -33,6 +33,8 @@ The server advertises these read tools:
 - `dutis_profiles`: list built-in profiles and ordered candidates.
 - `dutis_profile`: inspect one profile by its `profile` name.
 - `dutis_recommend`: generate an explainable policy-aware proposal, plan digest, and policy assessment by `profile` name.
+- `dutis_event_health`: summarize pending deliveries and dead letters without
+  returning event IDs or payload contents.
 - `dutis_drift`: check inline TOML for drift and return a timestamped report with policy assessment.
 - `dutis_query`: find installed handlers for one extension.
 - `dutis_get`: inspect the current default handler.
@@ -71,6 +73,11 @@ To use one, review its `proposed_toml`, rebuild it with `dutis_diff`, run
 `dutis_drift` accepts the same `config_toml` input as `dutis_diff`. It reports
 `in_sync`, `drift_detected`, or `unresolved` and never remediates. MCP clients
 must use the separately gated apply workflow for any change.
+
+`dutis_event_health` accepts no arguments. It is a local, read-only view over
+the validated event outbox and reports counts, attempt totals, timestamp ranges,
+and event type/source breakdowns. It does not expose replay, archive, or purge
+through MCP.
 
 ## Enable writes explicitly
 

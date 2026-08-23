@@ -28,6 +28,7 @@ A Rust application for inspecting and safely managing macOS default handlers for
 - 📡 **Event Sinks**: Stream versioned drift and mutation lifecycle events to private JSONL logs or trusted local commands
 - 🌐 **HTTPS Event Adapter**: Forward events with environment-only credentials, bounded retries, and idempotency headers
 - 📦 **Durable Event Replay**: Queue failed command deliveries locally and replay them without repeating the original mutation
+- 📊 **Delivery Health**: Summarize pending and dead-letter counts without exposing event payloads
 - 🍎 **Native Role Inspection**: Read separate viewer, editor, and shell defaults directly from macOS Launch Services
 
 ## Installation
@@ -263,6 +264,7 @@ export DUTIS_EVENT_COMMAND="$(command -v dutis-event-http)"
 dutis-event-http --check --json
 
 # Inspect and replay failed command deliveries
+dutis events health --json
 dutis events pending --json
 dutis events replay --limit 100 --json
 dutis events archive --max-attempts 5 --older-than-days 30 --json
@@ -278,6 +280,9 @@ directory. Override that location with `--event-outbox` or
 can deduplicate retries. See [durable event replay](docs/event-replay.md).
 Archive and purge commands are previews unless `--yes` is present, so pending
 deliveries are never removed by an implicit retention policy.
+`events health` is read-only and reports stable counts, retry totals, time
+ranges, and type/source breakdowns without event IDs or payload contents. The
+same summary is available to read-only MCP clients as `dutis_event_health`.
 
 All write paths enforce the same local policy before mutation and record the
 requester, reviewed plan, result, and verification. See the
