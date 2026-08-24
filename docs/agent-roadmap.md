@@ -385,9 +385,30 @@ Acceptance criteria:
 - Missing explicitly configured files, unsupported versions, oversized files,
   symlinks, and malformed entries fail before recommendation.
 
+## Phase 19: Guided terminal experience
+
+Status: implemented for v2.23.0
+
+Make the no-argument human workflow reflect Dutis's safety model without
+introducing a full-screen TUI or new runtime dependency.
+
+Acceptance criteria:
+
+- A numbered main menu separates extension management, application browsing,
+  system readiness, and advanced-workflow discovery.
+- Extension inspection shows the current default before presenting matching
+  applications.
+- Interactive mutations display the current and proposed handler and require
+  an explicit confirmation that defaults to no.
+- Cancelling, pressing Enter at confirmation, or returning from a submenu does
+  not change system state.
+- The governed policy, safety snapshot, audit, mutation, and verification
+  pipeline remains shared with non-interactive commands.
+- Input parsing and the guided entry point are covered by automated tests.
+
 ## Near-term engineering sequence
 
-1. Release Phase 18 and validate overlay composition across team presets.
+1. Release Phase 19 and observe where users still fall back to command help.
 2. Evaluate bounded concurrency controls for replay after observing real sink
    latency and failure patterns.
 3. Add signed profile distribution only if local deployment workflows prove

@@ -11,7 +11,7 @@ A Rust application for inspecting and safely managing macOS default handlers for
 
 - 🔍 **Scan System Applications**: Automatically discovers all installed applications on macOS
 - 📱 **Application Capability Discovery**: Reads declared extensions, UTIs, MIME types, URL schemes, and roles
-- 🎯 **Interactive Query Mode**: Search for applications that support specific file types
+- 🎯 **Guided Interactive Mode**: Inspect defaults, browse applications, and review changes before confirming them
 - ⚙️ **Default App Setting**: Set default applications for file types using the `duti` command
 - 🧭 **Accurate App Selection**: Preserves full application paths, including nested and duplicate names
 - 🧩 **Modern Metadata Support**: Reads legacy document types and modern UTI declarations
@@ -80,12 +80,24 @@ cargo install --path .
 
 ### Interactive Mode
 
-The application starts in interactive mode where you can:
+Run `dutis` without a subcommand to open the guided terminal menu. It lets you:
 
-1. **View All Applications**: See a comprehensive list of all applications and their supported file extensions
-2. **Search by Extension**: Enter a file extension (e.g., `txt`, `pdf`, `py`) to find supporting applications
-3. **Set Default Apps**: Choose an application to set as the default for a specific file type
-4. **Debug Information**: Access detailed scanning information
+1. **Inspect an extension**: See its current default and applications that
+   declare support for it.
+2. **Review and change its default**: Compare the current and proposed
+   handlers before an explicit `[y/N]` confirmation. Declining or pressing
+   Enter leaves the system unchanged.
+3. **Browse installed applications**: Page through application names, paths,
+   and bundle identifiers without starting a change.
+4. **Check readiness**: See scan coverage and whether `duti` is available for
+   mutations.
+5. **Discover advanced workflows**: Get direct pointers to typed handlers,
+   recommendations, declarative configuration, snapshots, drift monitoring,
+   and MCP.
+
+Every interactive mutation passes through the same policy, safety snapshot,
+audit, and post-change verification pipeline as the non-interactive CLI. Every
+submenu supports a clear path back to the main menu.
 
 ### Command Line Mode
 
