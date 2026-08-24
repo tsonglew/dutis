@@ -2030,47 +2030,86 @@ fn shell_display(arguments: &[String]) -> String {
 }
 
 fn run_interactive() -> Result<()> {
-    println!("🔍 macOS Application File Extension Manager");
-    println!("Scanning system applications...\n");
+    println!("Dutis — macOS Default Application Manager");
+    println!("Scanning installed applications...\n");
 
     let catalog = ApplicationCatalog::scan()?;
-    println!(
-        "Found {} applications, loading supported file extensions...\n",
-        catalog.applications.len()
-    );
+    println!("Ready. Found {} applications.", catalog.applications.len());
     if catalog.metadata_failures > 0 {
         eprintln!(
             "⚠️ Could not read metadata for {} applications; they remain available in the full application list.",
             catalog.metadata_failures
         );
     }
-    interactive_query(&catalog.applications)
+    println!("No system setting changes until you review and confirm them.");
+    interactive_main_menu(&catalog.applications)
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum InteractiveMenuChoice {
+    ManageExtension,
+    BrowseApplications,
+    SystemInformation,
+    AdvancedWorkflows,
+    Quit,
+}
+
+fn parse_interactive_menu_choice(input: &str) -> Option<InteractiveMenuChoice> {
+    match input.trim().to_ascii_lowercase().as_str() {
+        "1" | "manage" | "extension" => Some(InteractiveMenuChoice::ManageExtension),
+        "2" | "browse" | "applications" | "apps" => Some(InteractiveMenuChoice::BrowseApplications),
+        "3" | "system" | "info" | "diagnostics" | "doctor" => {
+            Some(InteractiveMenuChoice::SystemInformation)
+        }
+        "4" | "advanced" | "help" => Some(InteractiveMenuChoice::AdvancedWorkflows),
+        "q" | "quit" | "exit" => Some(InteractiveMenuChoice::Quit),
+        _ => None,
+    }
+}
+
+fn interactive_main_menu(applications: &[Application]) -> Result<()> {
+    loop {
+        println!("\nWhat would you like to do?");
+        println!("  1. Inspect or change a file extension");
+        println!("  2. Browse installed applications");
+        println!("  3. Show system information");
+        println!("  4. Show advanced workflows");
+        println!("  q. Quit");
+
+        let Some(input) = read_prompt("\nChoose an option: ")? else {
+            println!("\nGoodbye!");
+            return Ok(());
+        };
+        match parse_interactive_menu_choice(&input) {
+            Some(InteractiveMenuChoice::ManageExtension) => interactive_query(applications)?,
+            Some(InteractiveMenuChoice::BrowseApplications) => {
+                browse_applications_menu(applications)?
+            }
+            Some(InteractiveMenuChoice::SystemInformation) => display_system_info(applications),
+            Some(InteractiveMenuChoice::AdvancedWorkflows) => display_advanced_workflows(),
+            Some(InteractiveMenuChoice::Quit) => {
+                println!("Goodbye!");
+                return Ok(());
+            }
+            None => println!("Invalid option. Choose 1–4, or q to quit."),
+        }
+    }
 }
 
 fn interactive_query(applications: &[Application]) -> Result<()> {
-    println!("\n🎯 Interactive Query Mode");
-    println!("Enter a file extension (for example: py, js, txt)");
-    println!("Enter 'quit' or 'exit' to exit the program");
-    println!("Enter 'debug' to show scan information\n");
+    println!("\nInspect or change a file extension");
+    println!("Enter an extension such as md, txt, or pdf.");
 
     loop {
-        let Some(input) = read_prompt("Please enter file extension: ")? else {
-            println!("\n👋 Goodbye!");
-            break;
+        let Some(input) = read_prompt("Extension (or b to go back): ")? else {
+            return Ok(());
         };
         let input = input.trim();
 
         match input.to_ascii_lowercase().as_str() {
-            "quit" | "exit" | "q" => {
-                println!("👋 Goodbye!");
-                break;
-            }
-            "debug" => {
-                display_debug_info(applications);
-                continue;
-            }
+            "b" | "back" | "q" => return Ok(()),
             "" => {
-                println!("❌ Please enter a valid file extension");
+                println!("Enter an extension, or b to return to the main menu.");
                 continue;
             }
             _ => {}
@@ -2084,10 +2123,8 @@ fn interactive_query(applications: &[Application]) -> Result<()> {
             }
         };
         let display_extension = format!(".{extension}");
-        println!(
-            "🔍 Searching for applications that support {} files...",
-            display_extension.yellow()
-        );
+        println!("\nFile type: {}", display_extension.yellow());
+        display_current_default(&extension);
 
         let supporting_apps = find_apps_for_extension(applications, &extension);
         if supporting_apps.is_empty() {
@@ -2108,14 +2145,21 @@ fn interactive_query(applications: &[Application]) -> Result<()> {
                 }
             }
 
-            let Some(choice) = read_prompt(
-                "Enter 'all' to browse all applications, or press Enter to continue: ",
-            )?
-            else {
-                break;
-            };
-            if choice.trim().eq_ignore_ascii_case("all") {
-                show_all_apps_menu(&extension, applications)?;
+            loop {
+                let Some(choice) = read_prompt(
+                    "Enter 'all' to choose from every application, or press Enter to go back: ",
+                )?
+                else {
+                    return Ok(());
+                };
+                match choice.trim().to_ascii_lowercase().as_str() {
+                    "all" => {
+                        show_all_apps_menu(&extension, applications)?;
+                        return Ok(());
+                    }
+                    "" | "b" | "back" | "q" => return Ok(()),
+                    _ => println!("Enter all to browse applications, or press Enter to go back."),
+                }
             }
         } else {
             println!(
@@ -2132,31 +2176,34 @@ fn interactive_query(applications: &[Application]) -> Result<()> {
                 );
             }
 
-            println!("\nEnter an application number to set it as default");
-            println!("Enter 'all' to browse every application, or press Enter to skip");
-            let Some(choice) = read_prompt("Your choice: ")? else {
-                break;
-            };
-            let choice = choice.trim();
+            println!("\nEnter a number to review a change");
+            println!("Enter 'all' to browse every application, or b to go back");
+            loop {
+                let Some(choice) = read_prompt("Your choice: ")? else {
+                    return Ok(());
+                };
+                let choice = choice.trim();
 
-            if choice.eq_ignore_ascii_case("all") {
-                show_all_apps_menu(&extension, applications)?;
-            } else if !choice.is_empty() {
-                match choice.parse::<usize>() {
-                    Ok(index) if (1..=supporting_apps.len()).contains(&index) => {
-                        set_default_and_report(&extension, supporting_apps[index - 1]);
+                match choice.to_ascii_lowercase().as_str() {
+                    "all" => {
+                        show_all_apps_menu(&extension, applications)?;
+                        return Ok(());
                     }
-                    _ => println!(
-                        "❌ Invalid choice; enter a number between 1 and {}",
-                        supporting_apps.len()
-                    ),
+                    "" | "b" | "back" | "q" => return Ok(()),
+                    _ => match choice.parse::<usize>() {
+                        Ok(index) if (1..=supporting_apps.len()).contains(&index) => {
+                            set_default_and_report(&extension, supporting_apps[index - 1]);
+                            return Ok(());
+                        }
+                        _ => println!(
+                            "❌ Invalid choice; enter a number between 1 and {}",
+                            supporting_apps.len()
+                        ),
+                    },
                 }
             }
         }
-        println!();
     }
-
-    Ok(())
 }
 
 fn read_prompt(prompt: &str) -> Result<Option<String>> {
@@ -2170,75 +2217,199 @@ fn read_prompt(prompt: &str) -> Result<Option<String>> {
     Ok((bytes_read != 0).then_some(input))
 }
 
-fn display_debug_info(applications: &[Application]) {
+fn display_system_info(applications: &[Application]) {
     let with_extensions = applications
         .iter()
         .filter(|app| !app.extensions.is_empty())
         .count();
-    println!("\n🔍 Debug Information:");
+    println!("\nSystem information");
     println!("Applications scanned: {}", applications.len());
     println!("Applications declaring extensions: {with_extensions}");
-    for app in applications
-        .iter()
-        .filter(|app| !app.extensions.is_empty())
-        .take(10)
-    {
-        println!(
-            "  {}: {}",
-            app.name.bright_blue(),
-            app.extensions.join(", ").yellow()
-        );
+    match system::duti_version() {
+        Ok(version) => println!("Changes ready: yes (duti {version})"),
+        Err(error) => {
+            println!("Changes ready: no");
+            println!("Action: {error:#}");
+        }
     }
-    println!();
+}
+
+fn display_advanced_workflows() {
+    println!("\nAdvanced workflows are available through the CLI:");
+    println!("  Typed handlers:     dutis handler --help");
+    println!("  Recommendations:    dutis profile list && dutis recommend developer");
+    println!("  Declarative config: dutis plan dutis.toml && dutis apply --help");
+    println!("  Snapshots:          dutis snapshot create && dutis history");
+    println!("  Drift monitoring:   dutis watch --help");
+    println!("  AI agent server:    dutis mcp --help");
+    println!("\nFull documentation: https://github.com/tsonglew/dutis");
+}
+
+fn display_current_default(extension: &str) {
+    match system::duti_version().and_then(|_| system::query_default_app(extension)) {
+        Ok(Some(default)) => println!("Current default: {}", format_default_application(&default)),
+        Ok(None) => println!("Current default: not set"),
+        Err(error) => println!("Current default: unavailable ({error:#})"),
+    }
+}
+
+fn format_default_application(default: &system::DefaultApplication) -> String {
+    match default.name.as_deref() {
+        Some(name) if !name.trim().is_empty() => format!("{name} ({})", default.bundle_id),
+        _ => default.bundle_id.clone(),
+    }
 }
 
 fn set_default_and_report(extension: &str, app: &Application) {
-    let result = app
-        .bundle_id
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("{} has no readable bundle identifier", app.path.display()))
-        .and_then(|bundle_id| {
-            system::duti_version()?;
-            let current = system::query_default_app(extension)?;
-            let action =
-                if current.as_ref().map(|value| value.bundle_id.as_str()) == Some(bundle_id) {
-                    PlanAction::Unchanged
-                } else {
-                    PlanAction::Change
-                };
-            let plan = assemble_plan(
-                dutis::config::CONFIG_VERSION,
-                vec![PlanEntry {
-                    kind: AssociationKind::Extension,
-                    role: HandlerRole::All,
-                    extension: extension.to_owned(),
-                    selector: bundle_id.to_owned(),
-                    current,
-                    target: PlannedApplication::from_application(app),
-                    action,
-                    reason: None,
-                }],
-            )?;
-            let mut request = cli_mutation_request(None, MutationOperation::Set);
-            request.channel = MutationChannel::Interactive;
-            execute_governed_plan(
-                &plan,
-                SnapshotReason::BeforeApply,
-                &request,
-                system::set_default_handler,
-            )
-            .map_err(anyhow::Error::from)
-        });
-    match result {
-        Ok(result) => {
-            println!(
-                "✅ Successfully set {} as the default application for .{} files!",
-                app.name.bright_green(),
-                extension.yellow()
-            );
-            println!("Audit record: {}", result.audit_id);
+    if let Err(error) = review_and_set_default(extension, app) {
+        println!("❌ Failed to set default application: {error:#}");
+    }
+}
+
+fn review_and_set_default(extension: &str, app: &Application) -> Result<()> {
+    let bundle_id = app.bundle_id.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("{} has no readable bundle identifier", app.path.display())
+    })?;
+    system::duti_version()?;
+    let current = system::query_default_app(extension)?;
+    if current.as_ref().map(|value| value.bundle_id.as_str()) == Some(bundle_id) {
+        println!(
+            "\nNo change needed. {} is already the default for .{} files.",
+            app.name.bright_green(),
+            extension.yellow()
+        );
+        return Ok(());
+    }
+
+    println!("\nReview change");
+    println!("  File type: .{}", extension.yellow());
+    println!(
+        "  Current:   {}",
+        current
+            .as_ref()
+            .map(format_default_application)
+            .unwrap_or_else(|| "not set".to_owned())
+    );
+    println!("  New:       {} ({bundle_id})", app.name.bright_blue());
+    println!("\nDutis will enforce policy, create a safety snapshot, and verify the result.");
+
+    if !confirm_change()? {
+        println!("Cancelled. No system settings were changed.");
+        return Ok(());
+    }
+
+    let plan = assemble_plan(
+        dutis::config::CONFIG_VERSION,
+        vec![PlanEntry {
+            kind: AssociationKind::Extension,
+            role: HandlerRole::All,
+            extension: extension.to_owned(),
+            selector: bundle_id.to_owned(),
+            current,
+            target: PlannedApplication::from_application(app),
+            action: PlanAction::Change,
+            reason: None,
+        }],
+    )?;
+    let mut request = cli_mutation_request(None, MutationOperation::Set);
+    request.channel = MutationChannel::Interactive;
+    let result = execute_governed_plan(
+        &plan,
+        SnapshotReason::BeforeApply,
+        &request,
+        system::set_default_handler,
+    )
+    .map_err(anyhow::Error::from)?;
+    if result.report.failed > 0 {
+        let reason = result
+            .report
+            .results
+            .iter()
+            .find_map(|entry| entry.error.as_deref())
+            .unwrap_or("the result could not be verified");
+        anyhow::bail!(
+            "the change failed: {reason}. Review audit record {} for details",
+            result.audit_id
+        );
+    }
+
+    println!(
+        "✅ Set {} as the default application for .{} files and verified it.",
+        app.name.bright_green(),
+        extension.yellow()
+    );
+    println!("Audit record: {}", result.audit_id);
+    if let Some(snapshot_id) = result.safety_snapshot_id {
+        println!("Safety snapshot: {snapshot_id}");
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum ConfirmationChoice {
+    Confirm,
+    Decline,
+    Invalid,
+}
+
+fn parse_confirmation(input: &str) -> ConfirmationChoice {
+    match input.trim().to_ascii_lowercase().as_str() {
+        "y" | "yes" => ConfirmationChoice::Confirm,
+        "" | "n" | "no" => ConfirmationChoice::Decline,
+        _ => ConfirmationChoice::Invalid,
+    }
+}
+
+fn confirm_change() -> Result<bool> {
+    loop {
+        let Some(input) = read_prompt("Apply this change? [y/N]: ")? else {
+            return Ok(false);
+        };
+        match parse_confirmation(&input) {
+            ConfirmationChoice::Confirm => return Ok(true),
+            ConfirmationChoice::Decline => return Ok(false),
+            ConfirmationChoice::Invalid => println!("Enter y to apply, or n to cancel."),
         }
-        Err(error) => println!("❌ Failed to set default application: {error:#}"),
+    }
+}
+
+fn browse_applications_menu(applications: &[Application]) -> Result<()> {
+    const PAGE_SIZE: usize = 20;
+    if applications.is_empty() {
+        println!("No applications were found.");
+        return Ok(());
+    }
+
+    let mut page = 0;
+    let total_pages = applications.len().div_ceil(PAGE_SIZE);
+    loop {
+        println!(
+            "\nInstalled applications — page {}/{}",
+            page + 1,
+            total_pages
+        );
+        let start = page * PAGE_SIZE;
+        let end = usize::min(start + PAGE_SIZE, applications.len());
+        for app in &applications[start..end] {
+            let bundle_id = app.bundle_id.as_deref().unwrap_or("bundle ID unavailable");
+            println!(
+                "  {}\n    {}\n    {bundle_id}",
+                app.name.bright_blue(),
+                app.path.display()
+            );
+        }
+        println!("\nUse n/next, p/prev, or b/back.");
+        let Some(choice) = read_prompt("Your choice: ")? else {
+            return Ok(());
+        };
+        match choice.trim().to_ascii_lowercase().as_str() {
+            "b" | "back" | "q" => return Ok(()),
+            "n" | "next" if page + 1 < total_pages => page += 1,
+            "p" | "prev" if page > 0 => page -= 1,
+            "n" | "next" => println!("Already on the last page."),
+            "p" | "prev" => println!("Already on the first page."),
+            _ => println!("Enter n, p, or b."),
+        }
     }
 }
 
@@ -2274,14 +2445,14 @@ fn show_all_apps_menu(extension: &str, applications: &[Application]) -> Result<(
         if page + 1 < total_pages {
             println!("   • 'n' or 'next' for next page");
         }
-        println!("   • 'q' to return to the main menu");
+        println!("   • 'b' to return to the previous menu");
 
         let Some(choice) = read_prompt("Your choice: ")? else {
             break;
         };
         let choice = choice.trim().to_ascii_lowercase();
         match choice.as_str() {
-            "q" => break,
+            "b" | "back" | "q" => break,
             "n" | "next" if page + 1 < total_pages => page += 1,
             "p" | "prev" if page > 0 => page -= 1,
             "n" | "next" => println!("❌ Already on the last page"),
@@ -2330,6 +2501,41 @@ mod tests {
         let applications = vec![app("Text Editor", &["txt"]), app("Viewer", &["pdf"])];
         assert_eq!(find_fuzzy_matches(&applications, "editor").len(), 1);
         assert_eq!(find_fuzzy_matches(&applications, "pd").len(), 1);
+    }
+
+    #[test]
+    fn interactive_menu_accepts_numbers_and_readable_aliases() {
+        assert_eq!(
+            parse_interactive_menu_choice("1"),
+            Some(InteractiveMenuChoice::ManageExtension)
+        );
+        assert_eq!(
+            parse_interactive_menu_choice(" apps "),
+            Some(InteractiveMenuChoice::BrowseApplications)
+        );
+        assert_eq!(
+            parse_interactive_menu_choice("doctor"),
+            Some(InteractiveMenuChoice::SystemInformation)
+        );
+        assert_eq!(
+            parse_interactive_menu_choice("HELP"),
+            Some(InteractiveMenuChoice::AdvancedWorkflows)
+        );
+        assert_eq!(
+            parse_interactive_menu_choice("quit"),
+            Some(InteractiveMenuChoice::Quit)
+        );
+        assert_eq!(parse_interactive_menu_choice(""), None);
+        assert_eq!(parse_interactive_menu_choice("5"), None);
+    }
+
+    #[test]
+    fn interactive_confirmation_defaults_to_decline() {
+        assert_eq!(parse_confirmation("y"), ConfirmationChoice::Confirm);
+        assert_eq!(parse_confirmation("YES"), ConfirmationChoice::Confirm);
+        assert_eq!(parse_confirmation(""), ConfirmationChoice::Decline);
+        assert_eq!(parse_confirmation("n"), ConfirmationChoice::Decline);
+        assert_eq!(parse_confirmation("later"), ConfirmationChoice::Invalid);
     }
 
     #[test]

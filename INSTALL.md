@@ -69,8 +69,10 @@ The application will:
 
 1. Scan your system applications
 2. Read their declared filename extensions
-3. Enter interactive mode
-4. Check for `duti` only when you choose to change a default
+3. Open a guided menu for inspecting extensions, browsing applications, and
+   checking system readiness
+4. Show the current and proposed handler before asking you to confirm a change
+5. Check for `duti` only when reading or changing a default
 
 ## Updating
 

@@ -20,6 +20,25 @@ fn reports_package_version() {
 }
 
 #[test]
+fn interactive_mode_opens_a_guided_menu_and_recovers_from_invalid_input() {
+    let mut child = dutis()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.as_mut().unwrap().write_all(b"5\nq\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("No system setting changes until you review and confirm them."));
+    assert!(stdout.contains("1. Inspect or change a file extension"));
+    assert!(stdout.contains("Invalid option. Choose 1–4, or q to quit."));
+    assert!(stdout.contains("Goodbye!"));
+}
+
+#[test]
 fn json_usage_errors_have_a_stable_envelope_and_exit_code() {
     let output = dutis()
         .args(["query", "../../etc/passwd", "--json"])
