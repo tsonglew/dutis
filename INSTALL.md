@@ -74,6 +74,10 @@ The application will:
 4. Show the current and proposed handler before asking you to confirm a change
 5. Check for `duti` only when reading or changing a default
 
+In a terminal, use the arrow keys and Enter to select an action, Esc or `q` to
+go back, and type to filter long application lists. For a numbered text menu,
+run `DUTIS_TUI=plain dutis`. Piped input selects that mode automatically.
+
 ## Updating
 
 ### Via Homebrew

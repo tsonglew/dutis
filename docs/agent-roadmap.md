@@ -406,9 +406,31 @@ Acceptance criteria:
   pipeline remains shared with non-interactive commands.
 - Input parsing and the guided entry point are covered by automated tests.
 
+## Phase 20: Keyboard-first terminal UI
+
+Status: implemented for v2.24.0
+
+Add a compact interaction model inspired by modern coding-agent terminals while
+preserving the stable CLI and non-TTY behavior.
+
+Acceptance criteria:
+
+- Real terminals provide arrow-key navigation, highlighted selections, Enter
+  activation, and Esc or `q` cancellation without entering an alternate screen.
+- Long application lists support live fuzzy filtering by application name and
+  bundle identifier.
+- Confirmation remains explicit and defaults to no before any governed
+  mutation.
+- Piped input, redirected output, and `TERM=dumb` automatically use the
+  numbered plain-text flow.
+- `DUTIS_TUI=plain` provides a documented manual fallback for accessibility,
+  recording, and terminal compatibility.
+- TUI capability selection is tested independently from the host terminal.
+
 ## Near-term engineering sequence
 
-1. Release Phase 19 and observe where users still fall back to command help.
+1. Release Phase 20 and observe keyboard navigation and search behavior across
+   common macOS terminals.
 2. Evaluate bounded concurrency controls for replay after observing real sink
    latency and failure patterns.
 3. Add signed profile distribution only if local deployment workflows prove
