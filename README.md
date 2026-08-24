@@ -11,7 +11,7 @@ A Rust application for inspecting and safely managing macOS default handlers for
 
 - 🔍 **Scan System Applications**: Automatically discovers all installed applications on macOS
 - 📱 **Application Capability Discovery**: Reads declared extensions, UTIs, MIME types, URL schemes, and roles
-- 🎯 **Guided Interactive Mode**: Inspect defaults, browse applications, and review changes before confirming them
+- 🎯 **Keyboard-first TUI**: Navigate with arrow keys, search applications as you type, and review changes before confirming them
 - ⚙️ **Default App Setting**: Set default applications for file types using the `duti` command
 - 🧭 **Accurate App Selection**: Preserves full application paths, including nested and duplicate names
 - 🧩 **Modern Metadata Support**: Reads legacy document types and modern UTI declarations
@@ -98,6 +98,14 @@ Run `dutis` without a subcommand to open the guided terminal menu. It lets you:
 Every interactive mutation passes through the same policy, safety snapshot,
 audit, and post-change verification pipeline as the non-interactive CLI. Every
 submenu supports a clear path back to the main menu.
+
+When stdin, stdout, and stderr are attached to a capable terminal, Dutis uses a compact
+keyboard-first interface: arrow keys move the selection, Enter opens it, Esc or
+`q` returns, and application lists support type-to-filter fuzzy search. When
+input is piped or the terminal is non-interactive, Dutis automatically falls
+back to the numbered text interface so scripts and accessibility workflows
+remain predictable. Set `DUTIS_TUI=plain` to request the text interface
+explicitly.
 
 ### Command Line Mode
 
@@ -347,6 +355,7 @@ MCP, agent policies, profiles, drift detection, and event delivery is documented
 
 - **anyhow**: Error handling and propagation
 - **colored**: Terminal output formatting and colors
+- **dialoguer**: Keyboard navigation, searchable selectors, and confirmations
 - **plist**: Native XML and binary plist parsing
 - **clap**: Command parsing and generated help
 - **serde / serde_json**: Versioned machine-readable output

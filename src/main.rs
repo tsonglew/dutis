@@ -9,6 +9,7 @@ use cli::{
     SnapshotCreateArgs, WatchArgs,
 };
 use colored::*;
+use dialoguer::{theme::ColorfulTheme, Confirm, FuzzySelect, Input, Select};
 use dutis::application::{
     find_apps_for_extension, find_fuzzy_matches, find_handler_candidates, normalize_extension,
     resolve_app, Application, ApplicationCatalog, HandlerCandidate,
@@ -42,7 +43,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
@@ -2030,7 +2031,12 @@ fn shell_display(arguments: &[String]) -> String {
 }
 
 fn run_interactive() -> Result<()> {
-    println!("Dutis — macOS Default Application Manager");
+    let enhanced_tui = interactive_tui_available();
+    if enhanced_tui {
+        print_tui_banner();
+    } else {
+        println!("Dutis — macOS Default Application Manager");
+    }
     println!("Scanning installed applications...\n");
 
     let catalog = ApplicationCatalog::scan()?;
@@ -2042,7 +2048,63 @@ fn run_interactive() -> Result<()> {
         );
     }
     println!("No system setting changes until you review and confirm them.");
-    interactive_main_menu(&catalog.applications)
+    if enhanced_tui {
+        interactive_tui_main_menu(&catalog.applications)
+    } else {
+        interactive_main_menu(&catalog.applications)
+    }
+}
+
+fn interactive_tui_available() -> bool {
+    terminal_supports_tui(
+        io::stdin().is_terminal(),
+        io::stdout().is_terminal(),
+        io::stderr().is_terminal(),
+        std::env::var("TERM").ok().as_deref(),
+        std::env::var("DUTIS_TUI").ok().as_deref(),
+    )
+}
+
+fn terminal_supports_tui(
+    stdin_is_terminal: bool,
+    stdout_is_terminal: bool,
+    stderr_is_terminal: bool,
+    term: Option<&str>,
+    override_value: Option<&str>,
+) -> bool {
+    if override_value.is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "off" | "plain"
+        )
+    }) {
+        return false;
+    }
+    stdin_is_terminal
+        && stdout_is_terminal
+        && stderr_is_terminal
+        && !term.is_some_and(|value| value.eq_ignore_ascii_case("dumb"))
+}
+
+fn print_tui_banner() {
+    println!(
+        "{}",
+        "╭──────────────────────────────────────────────╮".bright_cyan()
+    );
+    println!(
+        "{}",
+        "│  DUTIS                                       │"
+            .bright_cyan()
+            .bold()
+    );
+    println!(
+        "{}",
+        "│  macOS default application manager           │".bright_cyan()
+    );
+    println!(
+        "{}",
+        "╰──────────────────────────────────────────────╯".bright_cyan()
+    );
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -2065,6 +2127,106 @@ fn parse_interactive_menu_choice(input: &str) -> Option<InteractiveMenuChoice> {
         "q" | "quit" | "exit" => Some(InteractiveMenuChoice::Quit),
         _ => None,
     }
+}
+
+fn interactive_tui_main_menu(applications: &[Application]) -> Result<()> {
+    let theme = ColorfulTheme::default();
+    let items = [
+        "Manage a file extension       inspect, compare, and change",
+        "Browse installed applications search names, paths, and bundle IDs",
+        "System information            scan coverage and mutation readiness",
+        "Advanced workflows            profiles, policies, drift, and MCP",
+        "Quit",
+    ];
+
+    loop {
+        println!("\n{}", "↑↓ navigate  •  Enter select  •  Esc back".dimmed());
+        let selection = Select::with_theme(&theme)
+            .with_prompt("What would you like to do?")
+            .items(&items)
+            .default(0)
+            .interact_opt()?;
+        match selection {
+            Some(0) => interactive_tui_extension(applications)?,
+            Some(1) => browse_applications_tui(applications)?,
+            Some(2) => display_system_info(applications),
+            Some(3) => display_advanced_workflows(),
+            Some(4) | None => {
+                println!("Goodbye!");
+                return Ok(());
+            }
+            Some(_) => unreachable!("menu selection is bounded by its items"),
+        }
+    }
+}
+
+fn interactive_tui_extension(applications: &[Application]) -> Result<()> {
+    let theme = ColorfulTheme::default();
+    loop {
+        println!("\n{}", "Type b to return to the main menu".dimmed());
+        let input: String = Input::with_theme(&theme)
+            .with_prompt("File extension")
+            .interact_text()?;
+        if matches!(input.trim().to_ascii_lowercase().as_str(), "b" | "back") {
+            return Ok(());
+        }
+        let extension = match normalize_extension(&input) {
+            Ok(extension) => extension,
+            Err(error) => {
+                println!("{} {error}", "Invalid extension:".red().bold());
+                continue;
+            }
+        };
+
+        println!("\n{} .{}", "Association".bold(), extension.yellow());
+        display_current_default(&extension);
+        let supporting_apps = find_apps_for_extension(applications, &extension);
+        if supporting_apps.is_empty() {
+            println!("No installed application explicitly declares this extension.");
+            let choices = ["Search all installed applications…", "Back"];
+            println!("{}", "↑↓ navigate  •  Enter select  •  Esc back".dimmed());
+            match Select::with_theme(&theme)
+                .with_prompt("Next step")
+                .items(&choices)
+                .default(0)
+                .interact_opt()?
+            {
+                Some(0) => show_all_apps_tui(&extension, applications)?,
+                Some(1) | None => {}
+                Some(_) => unreachable!("menu selection is bounded by its items"),
+            }
+            return Ok(());
+        }
+
+        let mut choices = supporting_apps
+            .iter()
+            .map(|app| application_choice_label(app))
+            .collect::<Vec<_>>();
+        choices.push("Search all installed applications…".to_owned());
+        choices.push("Back".to_owned());
+        println!("{}", "↑↓ navigate  •  Enter select  •  Esc back".dimmed());
+        let selection = Select::with_theme(&theme)
+            .with_prompt(format!("Applications declaring .{extension}"))
+            .items(&choices)
+            .default(0)
+            .max_length(12)
+            .interact_opt()?;
+        match selection {
+            Some(index) if index < supporting_apps.len() => {
+                set_default_and_report(&extension, supporting_apps[index]);
+            }
+            Some(index) if index == supporting_apps.len() => {
+                show_all_apps_tui(&extension, applications)?;
+            }
+            Some(_) | None => {}
+        }
+        return Ok(());
+    }
+}
+
+fn application_choice_label(app: &Application) -> String {
+    let bundle_id = app.bundle_id.as_deref().unwrap_or("bundle ID unavailable");
+    format!("{}  ·  {bundle_id}", app.name)
 }
 
 fn interactive_main_menu(applications: &[Application]) -> Result<()> {
@@ -2361,6 +2523,13 @@ fn parse_confirmation(input: &str) -> ConfirmationChoice {
 }
 
 fn confirm_change() -> Result<bool> {
+    if interactive_tui_available() {
+        return Ok(Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt("Apply this change?")
+            .default(false)
+            .interact_opt()?
+            .unwrap_or(false));
+    }
     loop {
         let Some(input) = read_prompt("Apply this change? [y/N]: ")? else {
             return Ok(false);
@@ -2371,6 +2540,79 @@ fn confirm_change() -> Result<bool> {
             ConfirmationChoice::Invalid => println!("Enter y to apply, or n to cancel."),
         }
     }
+}
+
+fn browse_applications_tui(applications: &[Application]) -> Result<()> {
+    if applications.is_empty() {
+        println!("No applications were found.");
+        return Ok(());
+    }
+
+    let theme = ColorfulTheme::default();
+    let choices = applications
+        .iter()
+        .map(application_choice_label)
+        .collect::<Vec<_>>();
+    loop {
+        println!(
+            "\n{}",
+            "Type to filter  •  ↑↓ navigate  •  Enter inspect  •  Esc back".dimmed()
+        );
+        let Some(index) = FuzzySelect::with_theme(&theme)
+            .with_prompt("Installed applications")
+            .items(&choices)
+            .default(0)
+            .max_length(12)
+            .interact_opt()?
+        else {
+            return Ok(());
+        };
+        let app = &applications[index];
+        println!("\n{}", app.name.bright_blue().bold());
+        println!("  Path: {}", app.path.display());
+        println!(
+            "  Bundle ID: {}",
+            app.bundle_id.as_deref().unwrap_or("unavailable")
+        );
+        println!("  Declared extensions: {}", app.extensions.len());
+
+        let actions = ["Browse another application", "Back to main menu"];
+        match Select::with_theme(&theme)
+            .with_prompt("Next step")
+            .items(&actions)
+            .default(0)
+            .interact_opt()?
+        {
+            Some(0) => {}
+            Some(1) | None => return Ok(()),
+            Some(_) => unreachable!("menu selection is bounded by its items"),
+        }
+    }
+}
+
+fn show_all_apps_tui(extension: &str, applications: &[Application]) -> Result<()> {
+    if applications.is_empty() {
+        println!("No applications were found.");
+        return Ok(());
+    }
+    let choices = applications
+        .iter()
+        .map(application_choice_label)
+        .collect::<Vec<_>>();
+    println!(
+        "\n{}",
+        "Type to filter  •  ↑↓ navigate  •  Enter select  •  Esc back".dimmed()
+    );
+    if let Some(index) = FuzzySelect::with_theme(&ColorfulTheme::default())
+        .with_prompt(format!("Choose the default application for .{extension}"))
+        .items(&choices)
+        .default(0)
+        .max_length(12)
+        .interact_opt()?
+    {
+        set_default_and_report(extension, &applications[index]);
+    }
+    Ok(())
 }
 
 fn browse_applications_menu(applications: &[Application]) -> Result<()> {
@@ -2536,6 +2778,46 @@ mod tests {
         assert_eq!(parse_confirmation(""), ConfirmationChoice::Decline);
         assert_eq!(parse_confirmation("n"), ConfirmationChoice::Decline);
         assert_eq!(parse_confirmation("later"), ConfirmationChoice::Invalid);
+    }
+
+    #[test]
+    fn enhanced_tui_requires_real_terminals_and_supports_plain_override() {
+        assert!(terminal_supports_tui(
+            true,
+            true,
+            true,
+            Some("xterm-256color"),
+            None
+        ));
+        assert!(!terminal_supports_tui(
+            false,
+            true,
+            true,
+            Some("xterm-256color"),
+            None
+        ));
+        assert!(!terminal_supports_tui(
+            true,
+            false,
+            true,
+            Some("xterm-256color"),
+            None
+        ));
+        assert!(!terminal_supports_tui(
+            true,
+            true,
+            false,
+            Some("xterm-256color"),
+            None
+        ));
+        assert!(!terminal_supports_tui(true, true, true, Some("dumb"), None));
+        assert!(!terminal_supports_tui(
+            true,
+            true,
+            true,
+            Some("xterm-256color"),
+            Some("plain")
+        ));
     }
 
     #[test]
