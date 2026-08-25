@@ -51,6 +51,9 @@ jobs:
           bash -n scripts/get_app_extensions.sh
           bash -n scripts/set_default_app.sh
 
+      - name: Test star history generator
+        run: python3 -m unittest scripts/test_generate_star_history.py
+
   build:
     name: Build ${{ matrix.target }}
     runs-on: macos-14
