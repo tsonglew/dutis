@@ -375,7 +375,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ### Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=tsonglew/dutis&type=Date&legend=top-left)](https://www.star-history.com/?repos=tsonglew%2Fdutis&type=date&legend=top-left)
+[View the Dutis star history on star-history.com →](https://www.star-history.com/?repos=tsonglew%2Fdutis&type=date&legend=top-left)
 
 ### Contributors
 
