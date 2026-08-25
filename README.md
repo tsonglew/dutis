@@ -375,7 +375,10 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ### Star History
 
-[View the Dutis star history on star-history.com →](https://www.star-history.com/?repos=tsonglew%2Fdutis&type=date&legend=top-left)
+[![Dutis Star History](https://tsonglew.github.io/dutis/star-history.svg)](https://tsonglew.github.io/dutis/star-history.svg)
+
+The chart is regenerated daily by GitHub Actions using an ephemeral repository
+token; no personal access token or individual stargazer identity is published.
 
 ### Contributors
 

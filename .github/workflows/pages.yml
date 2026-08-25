@@ -6,13 +6,11 @@ on:
       - master
     paths:
       - "website/**"
+      - "scripts/generate_star_history.py"
       - ".github/workflows/pages.yml"
+  schedule:
+    - cron: "17 3 * * *"
   workflow_dispatch:
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -20,6 +18,12 @@ concurrency:
 
 jobs:
   deploy:
+    permissions:
+      # GitHub requires collaborator-level repository access for star
+      # timestamps. This short-lived token is never written to the SVG.
+      contents: write
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -27,9 +31,19 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
+
+      - name: Generate star history
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/generate_star_history.py \
+            --repository "${GITHUB_REPOSITORY}" \
+            --output website/star-history.svg
 
       - name: Upload website
         uses: actions/upload-pages-artifact@v3

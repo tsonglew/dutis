@@ -30,6 +30,8 @@ Cargo.lock
 *.swp
 *.swo
 dist/
+__pycache__/
+*.py[cod]
 
 # Added by cargo
 
