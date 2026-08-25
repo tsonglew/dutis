@@ -17,16 +17,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  build:
     permissions:
       # GitHub requires collaborator-level repository access for star
       # timestamps. This short-lived token is never written to the SVG.
       contents: write
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -49,6 +44,18 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: website
+
+  deploy:
+    if: github.ref == 'refs/heads/master'
+    needs: build
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
 
       - name: Deploy website
         id: deployment
