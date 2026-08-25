@@ -373,9 +373,9 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Community
 
-### Stargazers
+### Star History
 
-[![Stargazers over time](https://starchart.cc/tsonglew/dutis.svg)](https://starchart.cc/tsonglew/dutis)
+[![Star History Chart](https://api.star-history.com/svg?repos=tsonglew/dutis&type=Date&legend=top-left)](https://www.star-history.com/?repos=tsonglew%2Fdutis&type=date&legend=top-left)
 
 ### Contributors
 
