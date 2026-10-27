@@ -1,8 +1,10 @@
 # Dutis - macOS Default Application Manager
 
 A Rust application for inspecting and safely managing macOS default handlers for filename extensions, UTIs, MIME types, and URL schemes.
+It includes an interactive terminal interface, script-friendly JSON, an agent
+skill, and a local MCP server that starts in read-only mode.
 
-**Website:** [tsonglew.github.io/dutis](https://tsonglew.github.io/dutis/)
+**Website:** [English](https://tsonglew.github.io/dutis/) · [中文](https://tsonglew.github.io/dutis/zh-cn/)
 
 [![CI](https://github.com/tsonglew/dutis/actions/workflows/ci.yml/badge.svg)](https://github.com/tsonglew/dutis/actions/workflows/ci.yml)
 [![Release](https://github.com/tsonglew/dutis/actions/workflows/release.yml/badge.svg)](https://github.com/tsonglew/dutis/actions/workflows/release.yml)
@@ -70,7 +72,9 @@ npx skills add "$(brew --prefix dutis)/share/dutis/skills/dutis" --skill dutis -
 Restart the agent session after installation so it can discover the skill. The
 skill guides the agent through inspection, preview, and verification; it does
 not install the `dutis` executable. See the [Homebrew guide](docs/homebrew-installation.md)
-for a direct symlink option.
+for a direct symlink option. The skill also has a
+[skills.sh page](https://skills.sh/tsonglew/dutis/dutis) and is available on
+[ClawHub for OpenClaw users](https://clawhub.ai/tsonglew/skills/dutis).
 
 To expose Dutis as read-only MCP tools, register its local server with your
 client. For example, for Codex:

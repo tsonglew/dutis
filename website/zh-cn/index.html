@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-Hans">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Dutis 是开源的 macOS 默认应用管理工具，可查询和修改文件关联、URL 协议处理程序，并通过 CLI、MCP 和 Skill 供 AI Agent 使用。" />
+    <meta name="theme-color" content="#f3f0e7" />
+    <meta property="og:title" content="Dutis — macOS 默认应用与文件关联管理" />
+    <meta property="og:description" content="查询文件和链接的默认打开方式，预览修改，并通过 MCP 与 AI Agent 配合使用。" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://tsonglew.github.io/dutis/zh-cn/" />
+    <link rel="canonical" href="https://tsonglew.github.io/dutis/zh-cn/" />
+    <link rel="alternate" hreflang="en" href="https://tsonglew.github.io/dutis/" />
+    <link rel="alternate" hreflang="zh-Hans" href="https://tsonglew.github.io/dutis/zh-cn/" />
+    <link rel="alternate" hreflang="x-default" href="https://tsonglew.github.io/dutis/" />
+    <link rel="icon" href="../favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=Instrument+Sans:wdth,wght@75..100,400..700&amp;display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="../styles.css" />
+    <title>Dutis — macOS 默认应用与文件关联管理，支持 MCP 和 AI Agent</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Dutis",
+        "url": "https://tsonglew.github.io/dutis/zh-cn/",
+        "operatingSystem": "macOS",
+        "applicationCategory": "UtilitiesApplication",
+        "isAccessibleForFree": true,
+        "description": "开源的 macOS 默认应用管理工具，支持文件关联、URL 协议、命令行、MCP 和 Agent Skill。"
+      }
+    </script>
+  </head>
+  <body class="localized">
+    <a class="skip-link" href="#main">跳到正文</a>
+    <div class="grain" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="Dutis 首页"><span class="brand-mark" aria-hidden="true">D</span><span>DUTIS</span></a>
+      <nav aria-label="主要导航">
+        <a href="#examples">使用示例</a>
+        <a href="#agents">AI Agent</a>
+        <a href="#install">安装</a>
+      </nav>
+      <div class="header-actions">
+        <a class="language-link" href="../" lang="en">English</a>
+        <a class="github-link" href="https://github.com/tsonglew/dutis">GitHub</a>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="hero-copy">
+          <p class="eyebrow">文件关联与默认应用</p>
+          <h1>macOS 默认应用<br /><em>由你决定。</em></h1>
+          <p class="hero-lede">Dutis 是开源的 macOS 默认应用管理工具。查询文件和链接的默认打开方式，预览修改，也可以让 AI Agent 通过模型上下文协议（MCP）协助操作。</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#install">使用 Homebrew 安装</a>
+            <a class="text-link" href="https://github.com/tsonglew/dutis">查看源码 <span aria-hidden="true">↗</span></a>
+          </div>
+          <dl class="hero-facts">
+            <div><dt>语言</dt><dd>Rust</dd></div>
+            <div><dt>平台</dt><dd>macOS</dd></div>
+            <div><dt>许可证</dt><dd>MIT</dd></div>
+          </dl>
+        </div>
+        <div class="guide-console">
+          <p class="section-index">TERMINAL / 先查询，再修改</p>
+          <pre><code># 查看 PDF 的默认应用
+dutis get pdf --json
+
+# 查找支持 PDF 的应用
+dutis query pdf --json
+
+# 预览 Markdown 默认应用的修改
+dutis set md com.microsoft.VSCode --dry-run --json</code></pre>
+          <p>预览不会修改系统；实际修改需要明确确认，Dutis 会在操作后验证结果。</p>
+        </div>
+      </section>
+
+      <div class="signal-strip" aria-hidden="true"><span>INSPECT</span><i></i><span>REVIEW</span><i></i><span>VERIFY</span></div>
+
+      <section class="answers section-pad" id="examples">
+        <div class="section-heading">
+          <p class="section-index">01 / 使用场景</p>
+          <h2>先弄清楚。<br />再做决定。</h2>
+        </div>
+        <div class="answer-grid">
+          <article class="answer">
+            <h3>查询文件的默认打开方式</h3>
+            <p>使用 <code>dutis get pdf --json</code> 查看当前默认应用；用 <code>dutis query pdf --json</code> 查找声明支持该文件类型的应用。</p>
+          </article>
+          <article class="answer">
+            <h3>预览默认应用的修改</h3>
+            <p>例如运行 <code>dutis set md com.microsoft.VSCode --dry-run --json</code>。非交互式实际修改需要明确传入 <code>--yes</code>。</p>
+          </article>
+          <article class="answer">
+            <h3>管理文件类型和链接</h3>
+            <p>支持扩展名、UTI、MIME 类型和 URL scheme；也可检查 macOS Launch Services 中不同角色的默认应用。</p>
+          </article>
+          <article class="answer">
+            <h3>与 duti 有什么关系？</h3>
+            <p>Dutis 使用 <code>duti</code> 执行修改，并提供应用发现、变更预览、结果验证、快照、JSON 输出和 MCP 服务。</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="agent-guide section-pad" id="agents">
+        <div class="section-heading">
+          <p class="section-index">02 / AI AGENT</p>
+          <h2>让 Agent 帮忙。<br />决定权仍在你。</h2>
+        </div>
+        <p class="agent-intro">Dutis 适合让 Agent 查询 macOS 文件关联、查找可用应用和预览变更。Skill 需要单独安装；MCP 服务包含在 CLI 中，需要在客户端注册。</p>
+        <div class="agent-grid">
+          <article class="agent-card">
+            <p class="section-index">01 / SKILL</p>
+            <h3>安装 Agent Skill</h3>
+            <p>安装 Dutis CLI 后，可将 Skill 安装给 Codex 或 Claude Code，指导 Agent 依次检查、预览、请求确认和验证。</p>
+            <pre><code>npx skills add tsonglew/dutis --skill dutis</code></pre>
+            <p class="resource-links"><a href="https://skills.sh/tsonglew/dutis/dutis">skills.sh</a> <a href="https://clawhub.ai/tsonglew/skills/dutis">ClawHub</a> <a href="https://github.com/tsonglew/dutis/blob/master/skills/dutis/SKILL.md">Skill 源码</a></p>
+          </article>
+          <article class="agent-card">
+            <p class="section-index">02 / MCP</p>
+            <h3>连接本地 MCP 服务</h3>
+            <p>MCP 默认提供只读的查询和规划工具。写入工具需要显式启用，并经过服务端授权。</p>
+            <pre><code>codex mcp add dutis -- dutis mcp</code></pre>
+            <p class="resource-links"><a href="https://github.com/tsonglew/dutis/blob/master/docs/mcp-server.md">MCP 配置和安全说明</a></p>
+          </article>
+        </div>
+      </section>
+
+      <section class="install section-pad" id="install">
+        <div class="install-copy">
+          <p class="section-index">03 / 安装</p>
+          <h2>一条命令。<br />开始使用。</h2>
+          <p>Homebrew 会安装适用于 Apple Silicon 和 Intel Mac 的通用版本，以及修改默认应用所需的 <code>duti</code> 依赖。</p>
+        </div>
+        <div class="command-panel">
+          <div class="command-label"><span>TERMINAL</span><span>HOMEBREW</span></div>
+          <div class="command-row"><code><span>$</span> brew install tsonglew/tap/dutis</code></div>
+          <div class="command-foot"><span>macOS</span><span>Open source</span></div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <a class="brand" href="#top"><span class="brand-mark" aria-hidden="true">D</span><span>DUTIS</span></a>
+      <p>默认应用，一目了然。</p>
+      <p>Tsonglew · MIT License</p>
+    </footer>
+  </body>
+</html>
