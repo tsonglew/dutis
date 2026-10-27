@@ -13,7 +13,31 @@ Read-only is the default:
 dutis mcp
 ```
 
-A typical MCP client configuration is:
+Install Dutis first and ensure `dutis` is on the client's `PATH`. Register the
+server with your agent; installing the CLI or its skill does not register MCP
+automatically. Restart the agent session after changing its MCP configuration.
+
+### Codex
+
+Register the server in your user configuration and inspect the entry:
+
+```bash
+codex mcp add dutis -- dutis mcp
+codex mcp get dutis
+```
+
+### Claude Code
+
+Register the server for your user and inspect the entry:
+
+```bash
+claude mcp add --scope user --transport stdio dutis -- dutis mcp
+claude mcp get dutis
+```
+
+### Other MCP clients
+
+A typical stdio client configuration is:
 
 ```json
 {
@@ -25,6 +49,17 @@ A typical MCP client configuration is:
   }
 }
 ```
+
+Some desktop clients have a different `PATH` from a terminal. If the client
+cannot find `dutis`, replace `"dutis"` with the absolute path printed by
+`command -v dutis`. Consult the client's documentation for where to save its
+MCP configuration.
+
+After registration, ask the agent to inspect the default app for a file type,
+or ask it to list the available Dutis tools. The default server exposes only
+read operations and planning; adding the server does not enable writes. To
+teach the agent when and how to use these tools, install the separate
+[Dutis skill](../skills/dutis/SKILL.md) as described in the [README](../README.md#use-with-coding-agents).
 
 The server advertises these read tools:
 
