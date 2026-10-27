@@ -48,6 +48,42 @@ brew install tsonglew/tap/dutis
 The tap installs universal `dutis` and `dutis-event-http` binaries for Apple
 Silicon and Intel Macs, together with the `duti` runtime dependency.
 
+### Use with coding agents
+
+For requests such as "which app opens PDFs?" or "make VS Code the default for
+Markdown files", install the [Dutis skill](skills/dutis/SKILL.md) as well as
+the CLI. Installing Dutis with Homebrew alone does not register the skill with
+your agent. With Node.js installed, make the skill available to Codex globally:
+
+```bash
+npx skills add tsonglew/dutis --skill dutis --global --agent codex
+```
+
+For Claude Code, replace `codex` with `claude-code`. Omit `--global` to install
+for the current project only. The command above installs the latest skill from
+GitHub; to use the copy bundled with your installed Homebrew release instead:
+
+```bash
+npx skills add "$(brew --prefix dutis)/share/dutis/skills/dutis" --skill dutis --global --agent codex
+```
+
+Restart the agent session after installation so it can discover the skill. The
+skill guides the agent through inspection, preview, and verification; it does
+not install the `dutis` executable. See the [Homebrew guide](docs/homebrew-installation.md)
+for a direct symlink option.
+
+To expose Dutis as read-only MCP tools, register its local server with your
+client. For example, for Codex:
+
+```bash
+codex mcp add dutis -- dutis mcp
+```
+
+For Claude Code and other clients, see the [MCP server guide](docs/mcp-server.md).
+MCP registration and skill installation are separate: either can be used on its
+own, and both require the local `dutis` executable. The server advertises write
+tools only when explicitly enabled.
+
 ### Install duti
 
 Browsing applications does not require `duti`. To change a default application, install it with:

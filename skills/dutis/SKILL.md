@@ -1,6 +1,12 @@
 ---
 name: dutis
-description: Inspect, plan, safely change, or roll back macOS default handlers for extensions, UTIs, MIME types, and URL schemes with Dutis through its CLI or MCP tools.
+description: >-
+  Inspect or manage macOS default applications and file associations with Dutis.
+  Use when asked which app opens a file type, to change its default app, find
+  installed apps that support it, manage URL scheme handlers, or restore previous
+  associations. Covers extensions, UTIs, MIME types, and URL schemes. Use for
+  macOS 默认打开方式、文件关联、默认应用或链接的默认处理程序. Do not use just
+  to open or edit one file without changing its default association.
 ---
 
 # Dutis
@@ -10,13 +16,20 @@ Use Dutis for macOS Launch Services associations. Preserve its
 
 ## Workflow
 
-1. Start read-only. Check readiness and the effective policy, then inspect the
-   requested association targets and installed handlers. Use `handler get` or
+1. Start read-only. Check readiness with `dutis doctor --json` and the effective
+   policy with `dutis policy show --json`, then inspect the requested association
+   targets and installed handlers. Use `dutis get <extension> --json` for the
+   current default or `dutis query <extension> --json` for supporting apps.
+   A restricted macOS shell can hide Launch Services associations and make
+   `dutis get` report no default even when one exists. If that happens, try the
+   read-only `dutis_get` or `dutis_handler_defaults` MCP tool when available;
+   otherwise report the uncertainty instead of concluding that no default is set.
+   Use `dutis handler get` or
    `dutis_handler_get` for UTIs, MIME types, URL schemes, and role-specific
-   defaults. Use `handler query` or `dutis_handler_query` to discover apps that
+   defaults. Use `dutis handler query` or `dutis_handler_query` to discover apps that
    explicitly register the requested kind and compatible role. Treat imported
    or exported UTI definitions as type evidence, not handler capability.
-   When roles may differ, use `handler defaults` or
+   When roles may differ, use `dutis handler defaults` or
    `dutis_handler_defaults` to inspect the native Launch Services role matrix
    before planning a change.
    If an event command reports a delivery failure, inspect `events health`

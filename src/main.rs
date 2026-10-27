@@ -2143,7 +2143,7 @@ fn interactive_tui_main_menu(applications: &[Application]) -> Result<()> {
         println!("\n{}", "↑↓ navigate  •  Enter select  •  Esc back".dimmed());
         let selection = Select::with_theme(&theme)
             .with_prompt("What would you like to do?")
-            .items(&items)
+            .items(items)
             .default(0)
             .interact_opt()?;
         match selection {
@@ -2187,7 +2187,7 @@ fn interactive_tui_extension(applications: &[Application]) -> Result<()> {
             println!("{}", "↑↓ navigate  •  Enter select  •  Esc back".dimmed());
             match Select::with_theme(&theme)
                 .with_prompt("Next step")
-                .items(&choices)
+                .items(choices)
                 .default(0)
                 .interact_opt()?
             {
@@ -2579,7 +2579,7 @@ fn browse_applications_tui(applications: &[Application]) -> Result<()> {
         let actions = ["Browse another application", "Back to main menu"];
         match Select::with_theme(&theme)
             .with_prompt("Next step")
-            .items(&actions)
+            .items(actions)
             .default(0)
             .interact_opt()?
         {
