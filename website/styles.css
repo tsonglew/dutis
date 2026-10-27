@@ -141,6 +141,25 @@ nav a:focus-visible::after {
   gap: 8px;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  gap: 22px;
+}
+
+.language-link {
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.language-link:hover,
+.language-link:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 5px;
+}
+
 .github-link svg {
   width: 18px;
   fill: currentColor;
@@ -210,6 +229,7 @@ h1 {
   font-stretch: condensed;
   font-weight: 650;
   letter-spacing: -0.07em;
+  word-spacing: 0.08em;
   line-height: 0.82;
 }
 
@@ -672,6 +692,119 @@ h1 em {
 .workflow-list p { max-width: 520px; margin: 0; color: var(--muted); line-height: 1.6; }
 .workflow-list code { padding: 2px 5px; background: var(--paper-deep); font-family: var(--mono); font-size: 0.86em; }
 
+.agent-guide,
+.answers {
+  border-bottom: 1px solid var(--line);
+}
+
+.agent-intro {
+  max-width: 720px;
+  margin: 0 0 48px auto;
+  color: #4f4b42;
+  font-size: clamp(18px, 1.5vw, 22px);
+  line-height: 1.55;
+}
+
+.agent-grid,
+.answer-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid var(--ink);
+  border-left: 1px solid var(--ink);
+}
+
+.agent-card,
+.answer {
+  min-width: 0;
+  padding: clamp(26px, 3vw, 44px);
+  border-right: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+}
+
+.agent-card h3,
+.answer h3 {
+  margin: 20px 0 14px;
+  font-size: clamp(23px, 2.2vw, 30px);
+  letter-spacing: -0.035em;
+}
+
+.agent-card > p:not(.section-index),
+.answer p {
+  max-width: 520px;
+  color: #4f4b42;
+  font-size: 16px;
+  line-height: 1.65;
+}
+
+.agent-card pre,
+.guide-console pre {
+  overflow-x: auto;
+  margin: 28px 0;
+  padding: 20px;
+  background: var(--ink);
+  color: var(--acid);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.answer code {
+  overflow-wrap: anywhere;
+  padding: 2px 5px;
+  background: var(--paper-deep);
+  font-family: var(--mono);
+  font-size: 0.87em;
+}
+
+.resource-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 22px;
+  margin-bottom: 0;
+}
+
+.resource-links a {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  text-underline-offset: 5px;
+}
+
+.answer h3 { margin-top: 0; }
+.answer p { margin-bottom: 0; }
+
+.localized h1 {
+  font-size: clamp(52px, 6.5vw, 100px);
+  letter-spacing: -0.04em;
+  line-height: 1.08;
+}
+
+.localized h1 em {
+  font-family: var(--display);
+  font-style: normal;
+  letter-spacing: -0.04em;
+}
+
+.localized .section-heading h2,
+.localized .install h2 {
+  letter-spacing: -0.025em;
+  line-height: 1.16;
+}
+
+.guide-console {
+  min-width: 0;
+  padding: clamp(24px, 3vw, 40px);
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  box-shadow: 18px 18px 0 var(--blue);
+  color: var(--white);
+}
+
+.guide-console pre { margin: 24px 0; padding: 0; }
+.guide-console p { margin: 0; color: rgba(255, 255, 255, 0.72); line-height: 1.6; }
+.guide-console .section-index { color: var(--acid); }
+
 .install {
   display: grid;
   grid-template-columns: 0.8fr 1.2fr;
@@ -804,7 +937,7 @@ footer p:last-child { justify-self: end; }
 @keyframes rotate { to { transform: rotate(360deg); } }
 
 @media (max-width: 1050px) {
-  .hero { grid-template-columns: 1fr; min-height: auto; }
+  .hero { grid-template-columns: minmax(0, 1fr); min-height: auto; }
   .hero-copy { max-width: 850px; }
   .switchboard { width: min(700px, calc(100% - 18px)); margin-left: auto; }
   .feature-grid { grid-template-columns: 1fr 1fr; }
@@ -836,6 +969,10 @@ footer p:last-child { justify-self: end; }
   .feature-grid { grid-template-columns: 1fr; }
   .feature-wide { grid-column: auto; }
   .feature { min-height: 420px; }
+  .agent-grid,
+  .answer-grid { grid-template-columns: 1fr; }
+  .localized h1 { font-size: clamp(45px, 11vw, 72px); }
+  .guide-console { box-shadow: 8px 8px 0 var(--blue); }
   .workflow-list li { grid-template-columns: 42px 1fr; }
   .workflow-list p { grid-column: 2; }
   .command-row { align-items: stretch; flex-direction: column; }

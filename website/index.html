@@ -5,16 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Dutis is a fast, open-source macOS utility for discovering file associations and changing default applications from the terminal."
+      content="Dutis is an open-source macOS default app manager. Inspect file associations and URL schemes with a CLI, MCP server, and agent skill."
     />
     <meta name="theme-color" content="#f3f0e7" />
-    <meta property="og:title" content="Dutis — Every extension. Your decision." />
+    <meta property="og:title" content="Dutis — macOS Default App Manager" />
     <meta
       property="og:description"
-      content="Inspect and control macOS file associations without digging through Finder."
+      content="Inspect and change macOS default apps for files and URL schemes, with a CLI, MCP server, and agent skill."
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://tsonglew.github.io/dutis/" />
+    <link rel="canonical" href="https://tsonglew.github.io/dutis/" />
+    <link rel="alternate" hreflang="en" href="https://tsonglew.github.io/dutis/" />
+    <link rel="alternate" hreflang="zh-Hans" href="https://tsonglew.github.io/dutis/zh-cn/" />
+    <link rel="alternate" hreflang="x-default" href="https://tsonglew.github.io/dutis/" />
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -24,7 +28,19 @@
     />
     <script>document.documentElement.classList.add("js");</script>
     <link rel="stylesheet" href="styles.css" />
-    <title>Dutis — macOS file associations, under control</title>
+    <title>Dutis — macOS Default App Manager, CLI and MCP Server</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Dutis",
+        "url": "https://tsonglew.github.io/dutis/",
+        "operatingSystem": "macOS",
+        "applicationCategory": "UtilitiesApplication",
+        "isAccessibleForFree": true,
+        "description": "Open-source macOS default app manager for file associations and URL schemes, with a CLI, MCP server, and agent skill."
+      }
+    </script>
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -38,14 +54,18 @@
       <nav aria-label="Primary navigation">
         <a href="#features">Features</a>
         <a href="#how-it-works">How it works</a>
+        <a href="#agents">For agents</a>
         <a href="#install">Install</a>
       </nav>
-      <a class="github-link" href="https://github.com/tsonglew/dutis">
+      <div class="header-actions">
+        <a class="language-link" href="zh-cn/" lang="zh-Hans">中文</a>
+        <a class="github-link" href="https://github.com/tsonglew/dutis">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M12 .7a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2.23c-3.23.7-3.91-1.37-3.91-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.58-.3-5.29-1.29-5.29-5.69 0-1.26.45-2.28 1.2-3.09-.12-.3-.52-1.47.11-3.05 0 0 .97-.31 3.16 1.18a10.94 10.94 0 0 1 5.76 0c2.19-1.49 3.16-1.18 3.16-1.18.63 1.58.23 2.76.11 3.05.75.81 1.2 1.83 1.2 3.09 0 4.42-2.72 5.39-5.3 5.68.42.36.79 1.07.79 2.16v3.2c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z" />
         </svg>
-        <span>GitHub</span>
-      </a>
+          <span>GitHub</span>
+        </a>
+      </div>
     </header>
 
     <main id="main">
@@ -53,11 +73,11 @@
         <div class="hero-copy">
           <p class="eyebrow reveal">FILE ASSOCIATION, WITHOUT THE HUNT</p>
           <h1 class="reveal delay-1">
-            Every extension.<br />
+            macOS defaults.<br />
             <em>Your decision.</em>
           </h1>
           <p class="hero-lede reveal delay-2">
-            Dutis shows which apps handle your files, then changes the default with one deliberate choice. No Finder archaeology. No mystery menus.
+            Dutis is an open-source macOS default app manager for files and URL schemes. Inspect handlers, review changes, and connect AI agents through the Model Context Protocol (MCP).
           </p>
           <div class="hero-actions reveal delay-3">
             <a class="button button-primary" href="#install">Install with Homebrew</a>
@@ -178,9 +198,60 @@
         </ol>
       </section>
 
+      <section class="agent-guide section-pad" id="agents">
+        <div class="section-heading reveal">
+          <p class="section-index">04 / FOR AI AGENTS</p>
+          <h2>Ask your agent.<br />Keep the review.</h2>
+        </div>
+        <p class="agent-intro reveal">
+          Use Dutis when an agent needs to inspect a macOS file association or plan a default app change. Install the skill separately and register the MCP server included with the CLI.
+        </p>
+        <div class="agent-grid">
+          <article class="agent-card reveal">
+            <p class="section-index">01 / SKILL</p>
+            <h3>Teach an agent the workflow</h3>
+            <p>Install the Dutis skill for Codex or Claude Code after installing the CLI. It guides inspection, preview, approval, and verification.</p>
+            <pre><code>npx skills add tsonglew/dutis --skill dutis</code></pre>
+            <p class="resource-links"><a href="https://skills.sh/tsonglew/dutis/dutis">skills.sh</a> <a href="https://clawhub.ai/tsonglew/skills/dutis">ClawHub</a> <a href="https://github.com/tsonglew/dutis/blob/master/skills/dutis/SKILL.md">Skill source</a></p>
+          </article>
+          <article class="agent-card reveal">
+            <p class="section-index">02 / MCP</p>
+            <h3>Connect the local MCP server</h3>
+            <p>Dutis exposes read-only discovery and planning tools by default. Write tools require explicit enablement and server-side approval.</p>
+            <pre><code>codex mcp add dutis -- dutis mcp</code></pre>
+            <p class="resource-links"><a href="https://github.com/tsonglew/dutis/blob/master/docs/mcp-server.md">MCP setup and safety details</a></p>
+          </article>
+        </div>
+      </section>
+
+      <section class="answers section-pad" id="examples">
+        <div class="section-heading reveal">
+          <p class="section-index">05 / EXAMPLES</p>
+          <h2>Useful answers.<br />Before changes.</h2>
+        </div>
+        <div class="answer-grid">
+          <article class="answer reveal">
+            <h3>Which app opens PDF files?</h3>
+            <p>Read the current default with <code>dutis get pdf --json</code>. Use <code>dutis query pdf --json</code> to find applications that declare support.</p>
+          </article>
+          <article class="answer reveal">
+            <h3>Can I preview a different default?</h3>
+            <p>Run <code>dutis set md com.microsoft.VSCode --dry-run --json</code> to preview a change. A real non-interactive change requires <code>--yes</code>.</p>
+          </article>
+          <article class="answer reveal">
+            <h3>Does Dutis handle links as well as files?</h3>
+            <p>Yes. Dutis supports file extensions, UTIs, MIME types, and URL schemes such as <code>https</code>. It can also inspect role-specific Launch Services defaults.</p>
+          </article>
+          <article class="answer reveal">
+            <h3>How is Dutis related to duti?</h3>
+            <p>Dutis uses <code>duti</code> to make changes and adds discovery, review, verification, snapshots, JSON output, and an MCP server.</p>
+          </article>
+        </div>
+      </section>
+
       <section class="install section-pad" id="install">
         <div class="install-copy reveal">
-          <p class="section-index">04 / INSTALL</p>
+          <p class="section-index">06 / INSTALL</p>
           <h2>One command.<br />Full control.</h2>
           <p>Homebrew installs the universal binary and its <code>duti</code> dependency. Works on Apple Silicon and Intel Macs.</p>
         </div>
