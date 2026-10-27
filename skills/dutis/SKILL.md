@@ -20,6 +20,10 @@ Use Dutis for macOS Launch Services associations. Preserve its
    policy with `dutis policy show --json`, then inspect the requested association
    targets and installed handlers. Use `dutis get <extension> --json` for the
    current default or `dutis query <extension> --json` for supporting apps.
+   A restricted macOS shell can hide Launch Services associations and make
+   `dutis get` report no default even when one exists. If that happens, try the
+   read-only `dutis_get` or `dutis_handler_defaults` MCP tool when available;
+   otherwise report the uncertainty instead of concluding that no default is set.
    Use `dutis handler get` or
    `dutis_handler_get` for UTIs, MIME types, URL schemes, and role-specific
    defaults. Use `dutis handler query` or `dutis_handler_query` to discover apps that

@@ -55,6 +55,13 @@ cannot find `dutis`, replace `"dutis"` with the absolute path printed by
 `command -v dutis`. Consult the client's documentation for where to save its
 MCP configuration.
 
+On macOS, a restricted agent shell may be unable to read a registered Launch
+Services default and `dutis get` may report `not_found` even when a default is
+set. If the separately launched MCP server has access to Launch Services, its
+read-only `dutis_get` or `dutis_handler_defaults` tools can inspect the default.
+If neither route can read it, report the limitation rather than assuming that no
+default exists.
+
 After registration, ask the agent to inspect the default app for a file type,
 or ask it to list the available Dutis tools. The default server exposes only
 read operations and planning; adding the server does not enable writes. To
