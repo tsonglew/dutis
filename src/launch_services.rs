@@ -40,6 +40,12 @@ pub fn query_role_defaults(
     platform::query_role_defaults(&target)
 }
 
+/// Resolve all filename-extension tags for a UTI without changing its registration.
+/// Unknown or extensionless types (and non-macOS platforms) return an empty list.
+pub(crate) fn filename_extensions_for_uti(identifier: &str) -> Result<Vec<String>> {
+    platform::filename_extensions_for_uti(identifier)
+}
+
 #[cfg(target_os = "macos")]
 mod platform {
     use super::*;
@@ -50,6 +56,7 @@ mod platform {
     type CFIndex = isize;
     type CFStringEncoding = u32;
     type CFStringRef = *const c_void;
+    type CFArrayRef = *const c_void;
     type LSRolesMask = u32;
 
     const K_CF_STRING_ENCODING_UTF8: CFStringEncoding = 0x0800_0100;
@@ -79,6 +86,8 @@ mod platform {
             encoding: CFStringEncoding,
         ) -> u8;
         fn CFRelease(value: *const c_void);
+        fn CFArrayGetCount(array: CFArrayRef) -> CFIndex;
+        fn CFArrayGetValueAtIndex(array: CFArrayRef, index: CFIndex) -> *const c_void;
     }
 
     #[link(name = "CoreServices", kind = "framework")]
@@ -91,6 +100,10 @@ mod platform {
             tag: CFStringRef,
             conforming_to: CFStringRef,
         ) -> CFStringRef;
+        fn UTTypeCopyAllTagsWithClass(
+            identifier: CFStringRef,
+            tag_class: CFStringRef,
+        ) -> CFArrayRef;
         fn LSCopyDefaultRoleHandlerForContentType(
             content_type: CFStringRef,
             role: LSRolesMask,
@@ -166,6 +179,31 @@ mod platform {
             .to_str()
             .context("Core Foundation returned invalid UTF-8")?
             .to_owned())
+    }
+
+    pub(super) fn filename_extensions_for_uti(identifier: &str) -> Result<Vec<String>> {
+        let identifier = OwnedCfString::new(identifier)?;
+        // SAFETY: Both arguments are live CFStrings. The returned array follows the copy rule
+        // and contains CFStrings, or is null when this type has no filename-extension tags.
+        let tags = unsafe {
+            UTTypeCopyAllTagsWithClass(identifier.as_ptr(), kUTTagClassFilenameExtension)
+        };
+        if tags.is_null() {
+            return Ok(Vec::new());
+        }
+        // SAFETY: `tags` is a live CFArray returned by UTTypeCopyAllTagsWithClass.
+        let count = unsafe { CFArrayGetCount(tags) };
+        let extensions = (0..count)
+            .map(|index| {
+                // SAFETY: Each index is in bounds and each element is a CFString owned by
+                // the still-live array. Conversion copies its contents into a Rust string.
+                let tag = unsafe { CFArrayGetValueAtIndex(tags, index) };
+                cf_string_to_string(tag)
+            })
+            .collect();
+        // SAFETY: Release the copied array exactly once, including when conversion failed.
+        unsafe { CFRelease(tags) };
+        extensions
     }
 
     pub(super) fn query_default_handler(
@@ -321,6 +359,16 @@ mod platform {
         }
 
         #[test]
+        fn resolves_all_extension_aliases_without_inventing_tags() {
+            let extensions = filename_extensions_for_uti("public.jpeg").unwrap();
+            assert!(extensions.iter().any(|value| value == "jpg"));
+            assert!(extensions.iter().any(|value| value == "jpeg"));
+            for identifier in ["public.data", "com.example.dutis.unknown-type"] {
+                assert!(filename_extensions_for_uti(identifier).unwrap().is_empty());
+            }
+        }
+
+        #[test]
         fn returns_complete_role_shapes_when_defaults_are_absent() {
             let report =
                 query_role_defaults(&AssociationTarget::extension("txt").unwrap()).unwrap();
@@ -354,6 +402,10 @@ mod platform {
 #[cfg(not(target_os = "macos"))]
 mod platform {
     use super::*;
+
+    pub(super) fn filename_extensions_for_uti(_identifier: &str) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
 
     pub(super) fn query_default_handler(
         _association: &AssociationTarget,

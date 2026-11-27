@@ -1,4 +1,5 @@
 use crate::association::{AssociationKind, AssociationTarget, HandlerRole};
+use crate::launch_services;
 use anyhow::{Context, Result};
 use plist::{Dictionary, Value};
 use serde::Serialize;
@@ -277,6 +278,20 @@ fn collect_document_type_extensions(root: &Dictionary, extensions: &mut BTreeSet
         if let Some(values) = document_type.get("CFBundleTypeExtensions") {
             collect_string_values(values, extensions);
         }
+        if document_handler_role(document_type).is_none() {
+            continue;
+        }
+        for identifier in normalized_values(
+            document_type.get("LSItemContentTypes"),
+            AssociationKind::Uti,
+        ) {
+            // A missing system type must not discard the application's other metadata.
+            if let Ok(values) = launch_services::filename_extensions_for_uti(&identifier) {
+                for value in values {
+                    insert_extension(&value, extensions);
+                }
+            }
+        }
     }
 }
 
@@ -332,6 +347,65 @@ mod tests {
                 .map(|(key, value)| (key.to_owned(), value))
                 .collect(),
         )
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn discovers_extensions_for_a_uti_only_editor() {
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/uti-only-editor.plist");
+        let metadata = PlistParser::new().parse_metadata(&path).unwrap();
+        for extension in ["docx", "odt", "doc", "rtf"] {
+            assert!(
+                metadata.extensions.iter().any(|value| value == extension),
+                "missing {extension}: {:?}",
+                metadata.extensions
+            );
+        }
+        assert_eq!(metadata.handlers.len(), 4);
+        assert!(metadata.handlers.iter().all(|handler| {
+            handler.kind == AssociationKind::Uti && handler.role == HandlerRole::Editor
+        }));
+        assert!(metadata.type_declarations.is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn merges_uti_tags_with_legacy_extensions_and_ignores_non_handlers() {
+        let plist = dictionary([(
+            "CFBundleDocumentTypes",
+            Value::Array(vec![
+                dictionary([
+                    ("CFBundleTypeExtensions", Value::String(".JPG".into())),
+                    ("CFBundleTypeRole", Value::String("Viewer".into())),
+                    ("LSItemContentTypes", Value::String("PUBLIC.JPEG".into())),
+                ]),
+                dictionary([
+                    ("CFBundleTypeRole", Value::String("None".into())),
+                    ("LSItemContentTypes", Value::String("com.adobe.pdf".into())),
+                ]),
+                dictionary([
+                    ("CFBundleTypeRole", Value::String("unsupported".into())),
+                    ("LSItemContentTypes", Value::String("public.png".into())),
+                ]),
+                dictionary([(
+                    "LSItemContentTypes",
+                    Value::Array(vec![
+                        Value::String("public.data".into()),
+                        Value::String("com.example.dutis.unknown-type".into()),
+                        Value::String("*".into()),
+                    ]),
+                )]),
+            ]),
+        )]);
+
+        let extensions = extract_extensions(&plist);
+        assert!(extensions.contains(&"jpeg".to_owned()));
+        assert_eq!(extensions.iter().filter(|value| *value == "jpg").count(), 1);
+        assert!(!extensions.contains(&"pdf".to_owned()));
+        assert!(!extensions.contains(&"png".to_owned()));
+        assert!(!extensions.contains(&"*".to_owned()));
+        assert!(extensions.windows(2).all(|pair| pair[0] < pair[1]));
     }
 
     #[test]
