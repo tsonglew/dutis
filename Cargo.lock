@@ -200,7 +200,7 @@ dependencies = [
 
 [[package]]
 name = "dutis"
-version = "2.24.0"
+version = "2.24.1"
 dependencies = [
  "anyhow",
  "clap",

@@ -76,6 +76,17 @@ The legacy `extensions` array remains available for compatibility and still
 contains extension tags from both document registrations and type definitions.
 Use `handlers` or `handler query` when the distinction matters.
 
+On macOS, `extensions` also includes all filename-extension tags resolved from
+the application's `LSItemContentTypes` document handlers through the system type
+database. This lets `dutis query docx`, interactive extension searches, and
+extension-based recommendations discover applications such as ElyDoc that
+declare the Word document UTI without repeating `CFBundleTypeExtensions`.
+Extension aliases are sorted and deduplicated. Unknown UTIs and types without
+filename extensions add nothing; `None` and unknown document roles are excluded
+from this resolution. The original typed `handlers` remain unchanged, preserving
+their roles and declaration evidence. Native tag resolution is skipped on other
+platforms.
+
 ## Full catalog
 
 `dutis list --json` and MCP `dutis_list` expose `handlers` and

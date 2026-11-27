@@ -19,6 +19,40 @@ fn reports_package_version() {
     );
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn query_finds_a_uti_only_editor() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let home = std::env::temp_dir().join(format!(
+        "dutis-uti-only-editor-{}-{unique}",
+        std::process::id()
+    ));
+    let contents = home.join("Applications/UtiOnlyEditor.app/Contents");
+    fs::create_dir_all(&contents).unwrap();
+    fs::write(
+        contents.join("Info.plist"),
+        include_bytes!("fixtures/uti-only-editor.plist"),
+    )
+    .unwrap();
+
+    let output = dutis()
+        .env("HOME", &home)
+        .args(["query", ".DOCX", "--json"])
+        .output()
+        .unwrap();
+    fs::remove_dir_all(home).unwrap();
+
+    assert!(output.status.success());
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let applications = response["data"]["applications"].as_array().unwrap();
+    assert!(applications
+        .iter()
+        .any(|application| { application["bundle_id"] == "com.example.dutis.uti-only-editor" }));
+}
+
 #[test]
 fn interactive_mode_opens_a_guided_menu_and_recovers_from_invalid_input() {
     let mut child = dutis()
